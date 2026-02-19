@@ -170,7 +170,7 @@ export default function RegistrationPage() {
         <div className="container animate-fade-in">
           <div className="logo-container">
             <Image
-              src="/Logo Canteen 375 (1).png"
+              src="/Logo Canteen 375 (2).png"
               alt="Canteen 375 Logo"
               width={100}
               height={100}
@@ -198,7 +198,7 @@ export default function RegistrationPage() {
       <div className="container animate-fade-in">
         <div className="logo-container">
           <Image
-            src="/Logo Canteen 375 (1).png"
+            src="/Logo Canteen 375 (2).png"
             alt="Canteen 375 Logo"
             width={100}
             height={100}
