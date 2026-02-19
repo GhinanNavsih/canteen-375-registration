@@ -154,7 +154,7 @@ export default function RegistrationPage() {
         createdAt: serverTimestamp(),
       };
 
-      await setDoc(doc(db, "Member Collection", docId), finalData);
+      await setDoc(doc(db, "Members", docId), finalData);
       setSuccess(true);
     } catch (err: any) {
       console.error(err);
