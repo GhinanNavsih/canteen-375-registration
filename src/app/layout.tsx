@@ -4,6 +4,10 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Member Registration | Canteen 375",
   description: "Official membership registration for Canteen 375 Plaza Unipdu. Join our community and collect points on every purchase.",
+  icons: {
+    icon: "/Logo Canteen 375 (2).png",
+    apple: "/Logo Canteen 375 (2).png",
+  }
 };
 
 export default function RootLayout({
