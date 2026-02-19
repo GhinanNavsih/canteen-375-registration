@@ -249,6 +249,7 @@ export default function RegistrationPage() {
                 id="dateOfBirth"
                 name="dateOfBirth"
                 placeholder="dd-mm-yyyy"
+                inputMode="numeric"
                 maxLength={10}
                 required
                 value={formData.dateOfBirth}
@@ -335,6 +336,7 @@ export default function RegistrationPage() {
                   id="phoneNumber"
                   name="phoneNumber"
                   placeholder="+628..."
+                  inputMode="tel"
                   required
                   value={formData.phoneNumber}
                   onChange={handleInputChange}
@@ -403,6 +405,7 @@ export default function RegistrationPage() {
                   id="phoneNumber"
                   name="phoneNumber"
                   placeholder="+628..."
+                  inputMode="tel"
                   required
                   value={formData.phoneNumber}
                   onChange={handleInputChange}
