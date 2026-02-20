@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { useMember } from "@/hooks/useMember";
+import { useMember } from "@/context/MemberContext";
 import Navbar from "@/components/Navbar";
 import { db } from "@/lib/firebase";
 import { doc, onSnapshot } from "firebase/firestore";

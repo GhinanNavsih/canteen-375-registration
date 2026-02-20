@@ -2,32 +2,32 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useMember } from "@/hooks/useMember";
+import { useMember } from "@/context/MemberContext";
 
 export default function Navbar() {
-    const pathname = usePathname();
-    const { member, logoutMember } = useMember();
+  const pathname = usePathname();
+  const { member, logoutMember } = useMember();
 
-    if (!member) return null;
+  if (!member) return null;
 
-    const isActive = (path: string) => pathname === path;
+  const isActive = (path: string) => pathname === path;
 
-    return (
-        <nav className="navbar">
-            <div className="nav-container">
-                <div className="nav-links">
-                    <Link href="/dashboard" className={`nav-link ${isActive("/dashboard") ? "active" : ""}`}>
-                        Dashboard
-                    </Link>
-                    <Link href="/leaderboard" className={`nav-link ${isActive("/leaderboard") ? "active" : ""}`}>
-                        Leaderboard
-                    </Link>
-                </div>
-                <button onClick={logoutMember} className="btn-logout">
-                    Logout
-                </button>
-            </div>
-            <style jsx>{`
+  return (
+    <nav className="navbar">
+      <div className="nav-container">
+        <div className="nav-links">
+          <Link href="/dashboard" className={`nav-link ${isActive("/dashboard") ? "active" : ""}`}>
+            Dashboard
+          </Link>
+          <Link href="/leaderboard" className={`nav-link ${isActive("/leaderboard") ? "active" : ""}`}>
+            Leaderboard
+          </Link>
+        </div>
+        <button onClick={logoutMember} className="btn-logout">
+          Logout
+        </button>
+      </div>
+      <style jsx>{`
         .navbar {
           width: 100%;
           background: white;
@@ -80,6 +80,6 @@ export default function Navbar() {
           color: white;
         }
       `}</style>
-        </nav>
-    );
+    </nav>
+  );
 }

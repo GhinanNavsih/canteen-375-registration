@@ -10,6 +10,8 @@ export const metadata: Metadata = {
   }
 };
 
+import { MemberProvider } from "@/context/MemberContext";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -21,7 +23,9 @@ export default function RootLayout({
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
       </head>
       <body>
-        {children}
+        <MemberProvider>
+          {children}
+        </MemberProvider>
       </body>
     </html>
   );

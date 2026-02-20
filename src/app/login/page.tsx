@@ -5,7 +5,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { db } from "@/lib/firebase";
 import { collection, query, where, getDocs } from "firebase/firestore";
-import { useMember } from "@/hooks/useMember";
+import { useMember } from "@/context/MemberContext";
 import { Member } from "@/types/member";
 
 export default function LoginPage() {

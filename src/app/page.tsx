@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { useMember } from "@/hooks/useMember";
+import { useMember } from "@/context/MemberContext";
 
 export default function Home() {
   const { member, loading } = useMember();

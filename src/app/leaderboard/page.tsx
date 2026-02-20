@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useMember } from "@/hooks/useMember";
+import { useMember } from "@/context/MemberContext";
 import Navbar from "@/components/Navbar";
 import { db } from "@/lib/firebase";
 import { doc, getDoc, collection, getDocs } from "firebase/firestore";
