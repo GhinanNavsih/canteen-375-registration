@@ -24,6 +24,10 @@ export default function LeaderboardPage() {
       return;
     }
 
+    if (member?.category) {
+      setSelectedCategory(member.category);
+    }
+
     const fetchData = async () => {
       setLoading(true);
       try {
