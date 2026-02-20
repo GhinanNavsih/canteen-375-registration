@@ -150,7 +150,7 @@ export default function RegistrationPage() {
 
       const finalData = {
         ...formData,
-        accruedPoints: 0,
+        points: 0,
         createdAt: serverTimestamp(),
       };
 
