@@ -7,7 +7,7 @@ export interface Member {
     dateOfBirth: string;
     email: string;
     category: Category;
-    accruedPoints: number;
+    points: number;
     createdAt: any;
     // Santri fields
     unitEducation?: string;
@@ -24,7 +24,7 @@ export interface Member {
 
 export interface CompetitionRecord {
     amountSpent: number;
-    customerPoints: number;
+    points: number;
     numberOfTransaction: number;
     memberName: string;
     memberId: string;

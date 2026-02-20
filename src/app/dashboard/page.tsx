@@ -10,119 +10,119 @@ import { doc, onSnapshot } from "firebase/firestore";
 import { Member } from "@/types/member";
 
 const MILESTONES = [
-    { points: 10, label: "Free Drink", icon: "🥤" },
-    { points: 50, label: "10% Voucher", icon: "🎟️" },
-    { points: 100, label: "50k Voucher", icon: "💰" },
-    { points: 250, label: "Free Lunch + Merch", icon: "🎁" },
+  { points: 10, label: "Free Drink", icon: "🥤" },
+  { points: 50, label: "10% Voucher", icon: "🎟️" },
+  { points: 100, label: "50k Voucher", icon: "💰" },
+  { points: 250, label: "Free Lunch + Merch", icon: "🎁" },
 ];
 
 export default function DashboardPage() {
-    const { member, loading: sessionLoading, logoutMember } = useMember();
-    const [liveMember, setLiveMember] = useState<Member | null>(null);
-    const router = useRouter();
+  const { member, loading: sessionLoading, logoutMember } = useMember();
+  const [liveMember, setLiveMember] = useState<Member | null>(null);
+  const router = useRouter();
 
-    useEffect(() => {
-        if (!sessionLoading && !member) {
-            router.push("/login");
-            return;
-        }
-
-        if (member) {
-            // Listen for live updates to points
-            const unsub = onSnapshot(doc(db, "Members", member.id), (docSnap) => {
-                if (docSnap.exists()) {
-                    setLiveMember({ id: docSnap.id, ...docSnap.data() } as Member);
-                }
-            });
-            return () => unsub();
-        }
-    }, [member, sessionLoading, router]);
-
-    if (sessionLoading || !member) {
-        return <div className="loading-screen">Loading...</div>;
+  useEffect(() => {
+    if (!sessionLoading && !member) {
+      router.push("/login");
+      return;
     }
 
-    const currentPoints = liveMember?.accruedPoints || member.accruedPoints || 0;
-    const nextMilestone = MILESTONES.find((m) => m.points > currentPoints) || MILESTONES[MILESTONES.length - 1];
-    const prevMilestonePoints = [...MILESTONES].reverse().find(m => m.points <= currentPoints)?.points || 0;
+    if (member) {
+      // Listen for live updates to points
+      const unsub = onSnapshot(doc(db, "Members", member.id), (docSnap) => {
+        if (docSnap.exists()) {
+          setLiveMember({ id: docSnap.id, ...docSnap.data() } as Member);
+        }
+      });
+      return () => unsub();
+    }
+  }, [member, sessionLoading, router]);
 
-    const progress = Math.min(100, (currentPoints / nextMilestone.points) * 100);
+  if (sessionLoading || !member) {
+    return <div className="loading-screen">Loading...</div>;
+  }
 
-    return (
-        <div className="dashboard-wrapper">
-            <Navbar />
-            <main className="dashboard-main">
-                <div className="dashboard-container animate-fade-in">
-                    <div className="profile-card">
-                        <div className="profile-header">
-                            <div className="avatar">
-                                {member.fullName.charAt(0).toUpperCase()}
-                            </div>
-                            <div className="profile-info">
-                                <h2>{member.fullName}</h2>
-                                <span className="category-badge">{member.category}</span>
-                            </div>
-                        </div>
+  const currentPoints = liveMember?.points || member.points || 0;
+  const nextMilestone = MILESTONES.find((m) => m.points > currentPoints) || MILESTONES[MILESTONES.length - 1];
+  const prevMilestonePoints = [...MILESTONES].reverse().find(m => m.points <= currentPoints)?.points || 0;
 
-                        <div className="points-display">
-                            <div className="points-value">
-                                <span className="number">{currentPoints}</span>
-                                <span className="label">Total Points</span>
-                            </div>
-                            <div className="points-icon">⭐</div>
-                        </div>
-                    </div>
+  const progress = Math.min(100, (currentPoints / nextMilestone.points) * 100);
 
-                    <div className="milestones-card">
-                        <h3>Milestones & Perks</h3>
-                        <div className="progress-section">
-                            <div className="progress-bar-container">
-                                <div className="progress-bar" style={{ width: `${progress}%` }}></div>
-                            </div>
-                            <p className="progress-text">
-                                {currentPoints >= nextMilestone.points
-                                    ? "Semua milestone tercapai! 🎉"
-                                    : `${nextMilestone.points - currentPoints} points lagi untuk mendapat ${nextMilestone.label}`}
-                            </p>
-                        </div>
+  return (
+    <div className="dashboard-wrapper">
+      <Navbar />
+      <main className="dashboard-main">
+        <div className="dashboard-container animate-fade-in">
+          <div className="profile-card">
+            <div className="profile-header">
+              <div className="avatar">
+                {member.fullName.charAt(0).toUpperCase()}
+              </div>
+              <div className="profile-info">
+                <h2>{member.fullName}</h2>
+                <span className="category-badge">{member.category}</span>
+              </div>
+            </div>
 
-                        <div className="milestones-grid">
-                            {MILESTONES.map((m, idx) => (
-                                <div
-                                    key={idx}
-                                    className={`milestone-item ${currentPoints >= m.points ? 'completed' : ''}`}
-                                >
-                                    <div className="m-icon">{m.icon}</div>
-                                    <div className="m-info">
-                                        <span className="m-label">{m.label}</span>
-                                        <span className="m-points">{m.points} Points</span>
-                                    </div>
-                                    {currentPoints >= m.points && <div className="check">✓</div>}
-                                </div>
-                            ))}
-                        </div>
-                    </div>
+            <div className="points-display">
+              <div className="points-value">
+                <span className="number">{currentPoints}</span>
+                <span className="label">Total Points</span>
+              </div>
+              <div className="points-icon">⭐</div>
+            </div>
+          </div>
 
-                    <div className="info-grid">
-                        <div className="info-item">
-                            <h4>Email</h4>
-                            <p>{member.email}</p>
-                        </div>
-                        <div className="info-item">
-                            <h4>Tanggal Lahir</h4>
-                            <p>{member.dateOfBirth}</p>
-                        </div>
-                        {member.phoneNumber && (
-                            <div className="info-item">
-                                <h4>No. Telepon</h4>
-                                <p>{member.phoneNumber}</p>
-                            </div>
-                        )}
-                    </div>
+          <div className="milestones-card">
+            <h3>Milestones & Perks</h3>
+            <div className="progress-section">
+              <div className="progress-bar-container">
+                <div className="progress-bar" style={{ width: `${progress}%` }}></div>
+              </div>
+              <p className="progress-text">
+                {currentPoints >= nextMilestone.points
+                  ? "Semua milestone tercapai! 🎉"
+                  : `${nextMilestone.points - currentPoints} points lagi untuk mendapat ${nextMilestone.label}`}
+              </p>
+            </div>
+
+            <div className="milestones-grid">
+              {MILESTONES.map((m, idx) => (
+                <div
+                  key={idx}
+                  className={`milestone-item ${currentPoints >= m.points ? 'completed' : ''}`}
+                >
+                  <div className="m-icon">{m.icon}</div>
+                  <div className="m-info">
+                    <span className="m-label">{m.label}</span>
+                    <span className="m-points">{m.points} Points</span>
+                  </div>
+                  {currentPoints >= m.points && <div className="check">✓</div>}
                 </div>
-            </main>
+              ))}
+            </div>
+          </div>
 
-            <style jsx>{`
+          <div className="info-grid">
+            <div className="info-item">
+              <h4>Email</h4>
+              <p>{member.email}</p>
+            </div>
+            <div className="info-item">
+              <h4>Tanggal Lahir</h4>
+              <p>{member.dateOfBirth}</p>
+            </div>
+            {member.phoneNumber && (
+              <div className="info-item">
+                <h4>No. Telepon</h4>
+                <p>{member.phoneNumber}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </main>
+
+      <style jsx>{`
         .dashboard-wrapper {
           min-height: 100vh;
           background: #C51720;
@@ -301,6 +301,6 @@ export default function DashboardPage() {
           font-weight: 600;
         }
       `}</style>
-        </div>
-    );
+    </div>
+  );
 }
