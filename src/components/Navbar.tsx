@@ -8,7 +8,7 @@ export default function Navbar() {
   const pathname = usePathname();
   const { member, logoutMember } = useMember();
 
-  if (!member) return null;
+  // Navbar should be visible for guest users too
 
   const isActive = (path: string) => pathname === path;
 
@@ -16,16 +16,24 @@ export default function Navbar() {
     <nav className="navbar">
       <div className="nav-container">
         <div className="nav-links">
-          <Link href="/dashboard" className={`nav-link ${isActive("/dashboard") ? "active" : ""}`}>
-            Dashboard
-          </Link>
+          {member && (
+            <Link href="/dashboard" className={`nav-link ${isActive("/dashboard") ? "active" : ""}`}>
+              Dashboard
+            </Link>
+          )}
           <Link href="/leaderboard" className={`nav-link ${isActive("/leaderboard") ? "active" : ""}`}>
             Leaderboard
           </Link>
         </div>
-        <button onClick={logoutMember} className="btn-logout">
-          Logout
-        </button>
+        {member ? (
+          <button onClick={logoutMember} className="btn-auth">
+            Logout
+          </button>
+        ) : (
+          <Link href="/login" className="btn-auth" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center' }}>
+            Login
+          </Link>
+        )}
       </div>
       <style jsx>{`
         .navbar {
@@ -65,7 +73,7 @@ export default function Navbar() {
           color: #C51720;
           border-bottom-color: #C51720;
         }
-        .btn-logout {
+        .btn-auth {
           background: #fdf2f2;
           color: #C51720;
           border: 1px solid #C51720;
@@ -75,7 +83,7 @@ export default function Navbar() {
           cursor: pointer;
           transition: all 0.2s;
         }
-        .btn-logout:hover {
+        .btn-auth:hover {
           background: #C51720;
           color: white;
         }

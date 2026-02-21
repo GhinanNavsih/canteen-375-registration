@@ -12,17 +12,14 @@ export default function LeaderboardPage() {
   const { member, loading: sessionLoading } = useMember();
   const [records, setRecords] = useState<CompetitionRecord[]>([]);
   const [members, setMembers] = useState<Record<string, Member>>({});
-  const [selectedCategory, setSelectedCategory] = useState<Category>("Santri");
+  const [selectedCategory, setSelectedCategory] = useState<Category>("Mahasiswa");
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
   const currentMonth = new Date().toISOString().slice(0, 7); // yyyy-mm
 
   useEffect(() => {
-    if (!sessionLoading && !member) {
-      router.push("/login");
-      return;
-    }
+    // Guests are allowed on the leaderboard, so no redirect is needed here and we skip member requirement
 
     if (member?.category) {
       setSelectedCategory(member.category);
@@ -66,9 +63,8 @@ export default function LeaderboardPage() {
       }
     };
 
-    if (member) {
-      fetchData();
-    }
+    // Fetch leaderboard data for all users, including guests
+    fetchData();
   }, [member, sessionLoading, router, currentMonth]);
 
   if (sessionLoading) {
@@ -141,7 +137,7 @@ export default function LeaderboardPage() {
             )}
           </div>
 
-          {myRank > 0 && !loading && (
+          {member && myRank > 0 && !loading && (
             <div className="my-rank-summary">
               <p>Posisi kamu saat ini: <strong>Peringkat {myRank}</strong></p>
             </div>
