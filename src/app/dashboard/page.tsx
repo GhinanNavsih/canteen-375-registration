@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { useMember } from "@/context/MemberContext";
@@ -21,7 +22,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!sessionLoading && !member) {
-      router.push("/login");
+      router.push("/leaderboard");
       return;
     }
 
@@ -39,16 +40,6 @@ export default function DashboardPage() {
         setVoucherGroups(snap.docs.map(d => ({ id: d.id, ...d.data() } as VoucherGroup)));
       });
 
-      // Fetch User's Vouchers
-      const qByUserId = query(collection(db, "voucher"), where("userId", "==", member.id.trim()));
-      const qByNama = query(collection(db, "voucher"), where("nama", "==", member.fullName.trim()));
-      const qByNamaCap = query(collection(db, "voucher"), where("Nama", "==", member.fullName.trim()));
-      const qByConstructedId = query(collection(db, "voucher"), where("userId", "==", member.fullName.trim().replace(/\s+/g, "") + "_" + (member.phoneNumber?.trim() || "")));
-
-      // Plural collection variations just in case
-      const qPluralNama = query(collection(db, "vouchers"), where("nama", "==", member.fullName.trim()));
-      const qPluralId = query(collection(db, "vouchers"), where("userId", "==", member.id.trim()));
-
       const unsubVouchers: (() => void)[] = [];
       const handleSnap = (snap: any) => {
         setUserVouchers(prev => {
@@ -57,7 +48,6 @@ export default function DashboardPage() {
             if (!merged.find(v => v.id === d.id)) {
               merged.push({ id: d.id, ...d.data() } as Voucher);
             } else {
-              // Update existing
               const idx = merged.findIndex(v => v.id === d.id);
               merged[idx] = { id: d.id, ...d.data() } as Voucher;
             }
@@ -66,11 +56,10 @@ export default function DashboardPage() {
         });
       };
 
+      const qByUserId = query(collection(db, "voucher"), where("userId", "==", member.id.trim()));
+      const qPluralId = query(collection(db, "vouchers"), where("userId", "==", member.id.trim()));
+
       unsubVouchers.push(onSnapshot(qByUserId, handleSnap));
-      unsubVouchers.push(onSnapshot(qByNama, handleSnap));
-      unsubVouchers.push(onSnapshot(qByNamaCap, handleSnap));
-      unsubVouchers.push(onSnapshot(qByConstructedId, handleSnap));
-      unsubVouchers.push(onSnapshot(qPluralNama, handleSnap));
       unsubVouchers.push(onSnapshot(qPluralId, handleSnap));
 
       return () => {
@@ -112,59 +101,71 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {voucherGroups.filter(g => g.expireDate && g.expireDate.toDate() > new Date()).length > 0 && (
-            <div className="campaigns-card">
-              <h3>🎉 Promo Terbatas!</h3>
-              <div className="campaigns-grid">
-                {voucherGroups
-                  .filter(g => g.expireDate && g.expireDate.toDate() > new Date())
-                  .map((group, idx) => {
-                    const matchVoucher = userVouchers.find(v => {
-                      const vGroupId = (v.voucherGroupId || "").trim();
-                      const gGroupId = (group.voucherGroupId || "").trim();
-                      const vName = (v.voucherName || "").trim().toLowerCase();
-                      const gName = (group.voucherName || "").trim().toLowerCase();
-                      return (vGroupId && vGroupId === gGroupId) || (vName && vName === gName);
-                    });
-                    const userProgressPoints = matchVoucher ? matchVoucher.userPoints : 0;
-                    const percent = Math.min(100, (userProgressPoints / group.threshold) * 100);
-                    const remaining = Math.max(0, group.threshold - userProgressPoints);
-                    const status = matchVoucher?.status || "IN_PROGRESS";
-                    const isClaimed = status === "CLAIMED";
-                    const isReadyToClaim = status === "READY_TO_CLAIM" || (userProgressPoints >= group.threshold && !isClaimed);
+          {voucherGroups.filter(g => {
+            const isNotExpired = g.expireDate && g.expireDate.toDate() > new Date();
+            const matchVoucher = userVouchers.find(v =>
+              v.voucherGroupId && v.voucherGroupId.trim() === g.voucherGroupId?.trim()
+            );
+            const isClaimed = matchVoucher?.status === "CLAIMED";
+            return isNotExpired && !isClaimed;
+          }).length > 0 && (
+              <div className="campaigns-card">
+                <div className="card-header-with-link">
+                  <h3>🎉 Promo Terbatas!</h3>
+                  <Link href="/vouchers" className="view-all-link">Lihat Semua →</Link>
+                </div>
+                <div className="campaigns-grid">
+                  {voucherGroups
+                    .filter(g => {
+                      const isNotExpired = g.expireDate && g.expireDate.toDate() > new Date();
+                      const matchVoucher = userVouchers.find(v =>
+                        v.voucherGroupId && v.voucherGroupId.trim() === g.voucherGroupId?.trim()
+                      );
+                      const isClaimed = matchVoucher?.status === "CLAIMED";
+                      return isNotExpired && !isClaimed;
+                    })
+                    .map((group, idx) => {
+                      const matchVoucher = userVouchers.find(v =>
+                        v.voucherGroupId && v.voucherGroupId.trim() === group.voucherGroupId?.trim()
+                      );
+                      const userProgressPoints = matchVoucher ? matchVoucher.userPoints : 0;
+                      const percent = Math.min(100, (userProgressPoints / group.threshold) * 100);
+                      const remaining = Math.max(0, group.threshold - userProgressPoints);
+                      const status = matchVoucher?.status || "IN_PROGRESS";
+                      const isClaimed = status === "CLAIMED";
+                      const isReadyToClaim = status === "READY_TO_CLAIM" || (userProgressPoints >= group.threshold && !isClaimed);
 
-                    const expDate = group.expireDate.toDate();
-                    const now = new Date();
-                    const diffMs = expDate.getTime() - now.getTime();
-                    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-                    const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                      const expDate = group.expireDate.toDate();
+                      const now = new Date();
+                      const diffMs = expDate.getTime() - now.getTime();
+                      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+                      const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
 
-                    let timerText = "";
-                    if (diffDays > 0) {
-                      timerText = `Berakhir dalam ${diffDays} hari ${diffHours} jam`;
-                    } else if (diffHours > 0) {
-                      timerText = `Berakhir dalam ${diffHours} jam lagi!`;
-                    } else {
-                      timerText = "Berakhir segera!";
-                    }
+                      let timerText = "";
+                      if (diffDays > 0) {
+                        timerText = `Berakhir dalam ${diffDays} hari ${diffHours} jam`;
+                      } else if (diffHours > 0) {
+                        timerText = `Berakhir dalam ${diffHours} jam lagi!`;
+                      } else {
+                        timerText = "Berakhir segera!";
+                      }
 
-                    return (
-                      <div
-                        key={idx}
-                        className={`campaign-item ${isClaimed ? 'claimed' : isReadyToClaim ? 'complete' : ''} ${isReadyToClaim ? 'clickable' : ''}`}
-                        onClick={() => {
-                          if (isReadyToClaim && matchVoucher) {
-                            setSelectedVoucher(matchVoucher);
-                            setShowModal(true);
-                          }
-                        }}
-                      >
-                        <div className="c-header">
-                          <span className="c-name">{group.voucherName}</span>
-                          <span className="c-value">Cashback Rp{group.value.toLocaleString('id-ID')}</span>
-                        </div>
+                      return (
+                        <div
+                          key={idx}
+                          className={`campaign-item ${isReadyToClaim ? 'complete' : ''} ${isReadyToClaim ? 'clickable' : ''}`}
+                          onClick={() => {
+                            if (isReadyToClaim && matchVoucher) {
+                              setSelectedVoucher(matchVoucher);
+                              setShowModal(true);
+                            }
+                          }}
+                        >
+                          <div className="c-header">
+                            <span className="c-name">{group.voucherName}</span>
+                            <span className="c-value">Cashback Rp{group.value.toLocaleString('id-ID')}</span>
+                          </div>
 
-                        {!isClaimed && (
                           <div className="c-urgency">
                             <span className={`nudge-text ${diffMs < 86400000 ? 'critical' : diffMs < 604800000 ? 'urgent' : 'normal'}`}>
                               {diffMs < 604800000 ? timerText + " ⏳" : `Berlaku s/d ${expDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}`}
@@ -175,35 +176,33 @@ export default function DashboardPage() {
                               </div>
                             )}
                           </div>
-                        )}
 
-                        {isClaimed ? (
-                          <div className="c-claimed-msg">Selamat! Kamu telah berhasil menikmati dan menukarkan voucher cashback ini. 🎉</div>
-                        ) : isReadyToClaim ? (
-                          <div className="c-ready-section">
-                            <div className="c-complete-msg">
-                              Voucher Siap Diklaim! 🎁
+
+                          {isReadyToClaim ? (
+                            <div className="c-ready-section">
+                              <div className="c-complete-msg">
+                                Voucher Siap Diklaim! 🎁
+                              </div>
+                              <div className="c-requirement-notice">
+                                Minimal transaksi <strong>Rp{(group.transactionRequirement || 0).toLocaleString('id-ID')}</strong> untuk aktivasi cashback.
+                              </div>
                             </div>
-                            <div className="c-requirement-notice">
-                              Minimal transaksi <strong>Rp{(group.transactionRequirement || 0).toLocaleString('id-ID')}</strong> untuk aktivasi cashback.
+                          ) : (
+                            <div className="c-progress-section">
+                              <div className="c-progress-bar-container">
+                                <div className="c-progress-bar" style={{ width: `${percent}%` }}></div>
+                              </div>
+                              <p className="c-progress-text">
+                                Kumpulkan {remaining} poin lagi untuk klaim voucher!
+                              </p>
                             </div>
-                          </div>
-                        ) : (
-                          <div className="c-progress-section">
-                            <div className="c-progress-bar-container">
-                              <div className="c-progress-bar" style={{ width: `${percent}%` }}></div>
-                            </div>
-                            <p className="c-progress-text">
-                              Kumpulkan {remaining} poin lagi untuk klaim voucher!
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
           <div className="info-grid">
             <div className="info-item">
@@ -342,8 +341,25 @@ export default function DashboardPage() {
           border: 1.5px solid #000;
         }
         .campaigns-card h3 {
-          margin-bottom: 1.5rem;
+          margin: 0;
           color: #2d241d;
+        }
+        .card-header-with-link {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 1.5rem;
+        }
+        .view-all-link {
+          font-size: 0.9rem;
+          font-weight: 700;
+          color: #C51720;
+          text-decoration: none;
+          transition: all 0.2s;
+        }
+        .view-all-link:hover {
+          transform: translateX(4px);
+          opacity: 0.8;
         }
         .campaigns-grid {
           display: flex;

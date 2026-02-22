@@ -120,7 +120,8 @@ export default function LeaderboardPage() {
                 {filteredRecords.map((rec, idx) => (
                   <div
                     key={rec.memberId}
-                    className={`lb-item ${rec.memberId === member?.id ? 'is-me' : ''}`}
+                    className={`lb-item ${rec.memberId === member?.id ? 'is-me' : ''} ${idx === 0 ? 'rank-gold' : idx === 1 ? 'rank-silver' : idx === 2 ? 'rank-bronze' : ''
+                      }`}
                   >
                     <div className="lb-rank">{getRankBadge(idx + 1)}</div>
                     <div className="lb-name">
@@ -216,6 +217,18 @@ export default function LeaderboardPage() {
         .lb-item:last-child { border-bottom: none; }
         .lb-item.is-me {
           background: #fff8e1;
+        }
+        .lb-item.rank-gold {
+          background: linear-gradient(to right, #fffdf2, #fff9c4);
+          border-bottom: 2px solid #ffd700;
+          margin-bottom: 8px; /* Highlighting first place with extra spacing */
+          border-radius: 0 0 12px 12px;
+        }
+        .lb-item.rank-silver {
+          background: linear-gradient(to right, #fafafa, #f5f5f5);
+        }
+        .lb-item.rank-bronze {
+          background: linear-gradient(to right, #fff9f5, #fdf5f0);
         }
         .lb-rank {
           width: 40px;

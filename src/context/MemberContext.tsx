@@ -39,7 +39,7 @@ export function MemberProvider({ children }: { children: React.ReactNode }) {
     const logoutMember = () => {
         localStorage.removeItem('canteen_member_session');
         setMember(null);
-        router.push('/login');
+        router.push('/leaderboard');
     };
 
     return (

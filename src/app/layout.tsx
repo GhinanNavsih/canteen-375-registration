@@ -11,6 +11,7 @@ export const metadata: Metadata = {
 };
 
 import { MemberProvider } from "@/context/MemberContext";
+import StyledJsxRegistry from "./registry";
 
 export default function RootLayout({
   children,
@@ -23,9 +24,11 @@ export default function RootLayout({
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
       </head>
       <body>
-        <MemberProvider>
-          {children}
-        </MemberProvider>
+        <StyledJsxRegistry>
+          <MemberProvider>
+            {children}
+          </MemberProvider>
+        </StyledJsxRegistry>
       </body>
     </html>
   );
