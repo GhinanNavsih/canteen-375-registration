@@ -81,7 +81,10 @@ export default function LeaderboardPage() {
       if (b.points !== a.points) {
         return b.points - a.points;
       }
-      return b.amountSpent - a.amountSpent;
+      if (b.amountSpent !== a.amountSpent) {
+        return b.amountSpent - a.amountSpent;
+      }
+      return b.numberOfTransaction - a.numberOfTransaction;
     });
 
   const myRank = filteredRecords.findIndex(r => r.memberId === member?.id) + 1;
