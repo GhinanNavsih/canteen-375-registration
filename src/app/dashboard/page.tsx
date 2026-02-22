@@ -6,19 +6,15 @@ import Image from "next/image";
 import { useMember } from "@/context/MemberContext";
 import Navbar from "@/components/Navbar";
 import { db } from "@/lib/firebase";
-import { doc, onSnapshot } from "firebase/firestore";
+import { doc, onSnapshot, collection, query, where, or } from "firebase/firestore";
 import { Member } from "@/types/member";
-
-const MILESTONES = [
-  { points: 10, label: "Free Drink", icon: "🥤" },
-  { points: 50, label: "10% Voucher", icon: "🎟️" },
-  { points: 100, label: "50k Voucher", icon: "💰" },
-  { points: 250, label: "Free Lunch + Merch", icon: "🎁" },
-];
+import { VoucherGroup, Voucher } from "@/types/voucher";
 
 export default function DashboardPage() {
   const { member, loading: sessionLoading, logoutMember } = useMember();
   const [liveMember, setLiveMember] = useState<Member | null>(null);
+  const [voucherGroups, setVoucherGroups] = useState<VoucherGroup[]>([]);
+  const [userVouchers, setUserVouchers] = useState<Voucher[]>([]);
   const router = useRouter();
 
   useEffect(() => {
@@ -34,7 +30,52 @@ export default function DashboardPage() {
           setLiveMember({ id: docSnap.id, ...docSnap.data() } as Member);
         }
       });
-      return () => unsub();
+
+      // Fetch Active Campaigns
+      const qGroups = query(collection(db, "voucherGroup"), where("isActive", "==", true));
+      const unsubGroups = onSnapshot(qGroups, (snap) => {
+        setVoucherGroups(snap.docs.map(d => ({ id: d.id, ...d.data() } as VoucherGroup)));
+      });
+
+      // Fetch User's Vouchers
+      const qByUserId = query(collection(db, "voucher"), where("userId", "==", member.id.trim()));
+      const qByNama = query(collection(db, "voucher"), where("nama", "==", member.fullName.trim()));
+      const qByNamaCap = query(collection(db, "voucher"), where("Nama", "==", member.fullName.trim()));
+      const qByConstructedId = query(collection(db, "voucher"), where("userId", "==", member.fullName.trim().replace(/\s+/g, "") + "_" + (member.phoneNumber?.trim() || "")));
+
+      // Plural collection variations just in case
+      const qPluralNama = query(collection(db, "vouchers"), where("nama", "==", member.fullName.trim()));
+      const qPluralId = query(collection(db, "vouchers"), where("userId", "==", member.id.trim()));
+
+      const unsubVouchers: (() => void)[] = [];
+      const handleSnap = (snap: any) => {
+        setUserVouchers(prev => {
+          const merged = [...prev];
+          snap.docs.forEach((d: any) => {
+            if (!merged.find(v => v.id === d.id)) {
+              merged.push({ id: d.id, ...d.data() } as Voucher);
+            } else {
+              // Update existing
+              const idx = merged.findIndex(v => v.id === d.id);
+              merged[idx] = { id: d.id, ...d.data() } as Voucher;
+            }
+          });
+          return merged;
+        });
+      };
+
+      unsubVouchers.push(onSnapshot(qByUserId, handleSnap));
+      unsubVouchers.push(onSnapshot(qByNama, handleSnap));
+      unsubVouchers.push(onSnapshot(qByNamaCap, handleSnap));
+      unsubVouchers.push(onSnapshot(qByConstructedId, handleSnap));
+      unsubVouchers.push(onSnapshot(qPluralNama, handleSnap));
+      unsubVouchers.push(onSnapshot(qPluralId, handleSnap));
+
+      return () => {
+        unsub();
+        unsubGroups();
+        unsubVouchers.forEach(fn => fn());
+      };
     }
   }, [member, sessionLoading, router]);
 
@@ -43,10 +84,6 @@ export default function DashboardPage() {
   }
 
   const currentPoints = liveMember?.points || member.points || 0;
-  const nextMilestone = MILESTONES.find((m) => m.points > currentPoints) || MILESTONES[MILESTONES.length - 1];
-  const prevMilestonePoints = [...MILESTONES].reverse().find(m => m.points <= currentPoints)?.points || 0;
-
-  const progress = Math.min(100, (currentPoints / nextMilestone.points) * 100);
 
   return (
     <div className="dashboard-wrapper">
@@ -73,35 +110,89 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div className="milestones-card">
-            <h3>Milestones & Perks</h3>
-            <div className="progress-section">
-              <div className="progress-bar-container">
-                <div className="progress-bar" style={{ width: `${progress}%` }}></div>
-              </div>
-              <p className="progress-text">
-                {currentPoints >= nextMilestone.points
-                  ? "Semua milestone tercapai! 🎉"
-                  : `${nextMilestone.points - currentPoints} points lagi untuk mendapat ${nextMilestone.label}`}
-              </p>
-            </div>
+          {voucherGroups.filter(g => g.expireDate && g.expireDate.toDate() > new Date()).length > 0 && (
+            <div className="campaigns-card">
+              <h3>🎉 Promo Terbatas!</h3>
+              <div className="campaigns-grid">
+                {voucherGroups
+                  .filter(g => g.expireDate && g.expireDate.toDate() > new Date())
+                  .map((group, idx) => {
+                    const matchVoucher = userVouchers.find(v => {
+                      const vGroupId = (v.voucherGroupId || "").trim();
+                      const gGroupId = (group.voucherGroupId || "").trim();
+                      const vName = (v.voucherName || "").trim().toLowerCase();
+                      const gName = (group.voucherName || "").trim().toLowerCase();
+                      return (vGroupId && vGroupId === gGroupId) || (vName && vName === gName);
+                    });
+                    const userProgressPoints = matchVoucher ? matchVoucher.userPoints : 0;
+                    const percent = Math.min(100, (userProgressPoints / group.threshold) * 100);
+                    const remaining = Math.max(0, group.threshold - userProgressPoints);
+                    const status = matchVoucher?.status || "IN_PROGRESS";
+                    const isClaimed = status === "CLAIMED";
+                    const isReadyToClaim = status === "READY_TO_CLAIM" || (userProgressPoints >= group.threshold && !isClaimed);
 
-            <div className="milestones-grid">
-              {MILESTONES.map((m, idx) => (
-                <div
-                  key={idx}
-                  className={`milestone-item ${currentPoints >= m.points ? 'completed' : ''}`}
-                >
-                  <div className="m-icon">{m.icon}</div>
-                  <div className="m-info">
-                    <span className="m-label">{m.label}</span>
-                    <span className="m-points">{m.points} Points</span>
-                  </div>
-                  {currentPoints >= m.points && <div className="check">✓</div>}
-                </div>
-              ))}
+                    const expDate = group.expireDate.toDate();
+                    const now = new Date();
+                    const diffMs = expDate.getTime() - now.getTime();
+                    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+                    const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+
+                    let timerText = "";
+                    if (diffDays > 0) {
+                      timerText = `Berakhir dalam ${diffDays} hari ${diffHours} jam`;
+                    } else if (diffHours > 0) {
+                      timerText = `Berakhir dalam ${diffHours} jam lagi!`;
+                    } else {
+                      timerText = "Berakhir segera!";
+                    }
+
+                    return (
+                      <div key={idx} className={`campaign-item ${isClaimed ? 'claimed' : isReadyToClaim ? 'complete' : ''}`}>
+                        <div className="c-header">
+                          <span className="c-name">{group.voucherName}</span>
+                          <span className="c-value">Cashback Rp{group.value.toLocaleString('id-ID')}</span>
+                        </div>
+
+                        {!isClaimed && (
+                          <div className="c-urgency">
+                            <span className={`nudge-text ${diffMs < 86400000 ? 'critical' : diffMs < 604800000 ? 'urgent' : 'normal'}`}>
+                              {diffMs < 604800000 ? timerText + " ⏳" : `Berlaku s/d ${expDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}`}
+                            </span>
+                            {diffMs < 604800000 && (
+                              <div className="exp-date-sub">
+                                s/d {expDate.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} • {expDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {isClaimed ? (
+                          <div className="c-claimed-msg">Selamat! Kamu telah berhasil menikmati dan menukarkan voucher cashback ini. 🎉</div>
+                        ) : isReadyToClaim ? (
+                          <div className="c-ready-section">
+                            <div className="c-complete-msg">
+                              Voucher Siap Diklaim! 🎁
+                            </div>
+                            <div className="c-requirement-notice">
+                              Minimal transaksi <strong>Rp{(group.transactionRequirement || 0).toLocaleString('id-ID')}</strong> untuk aktivasi cashback.
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="c-progress-section">
+                            <div className="c-progress-bar-container">
+                              <div className="c-progress-bar" style={{ width: `${percent}%` }}></div>
+                            </div>
+                            <p className="c-progress-text">
+                              Kumpulkan {remaining} poin lagi untuk klaim voucher!
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="info-grid">
             <div className="info-item">
@@ -139,7 +230,7 @@ export default function DashboardPage() {
           flex-direction: column;
           gap: 1.5rem;
         }
-        .profile-card, .milestones-card, .info-grid {
+        .profile-card, .info-grid {
           background: white;
           border-radius: 20px;
           padding: 2rem;
@@ -206,68 +297,152 @@ export default function DashboardPage() {
         .points-icon {
           font-size: 3rem;
         }
-        .milestones-card h3 {
+        .campaigns-card {
+          background: white;
+          border-radius: 20px;
+          padding: 2rem;
+          box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+          border: 1.5px solid #000;
+        }
+        .campaigns-card h3 {
           margin-bottom: 1.5rem;
           color: #2d241d;
         }
-        .progress-section {
-          margin-bottom: 2rem;
+        .campaigns-grid {
+          display: flex;
+          flex-direction: column;
+          gap: 1.2rem;
         }
-        .progress-bar-container {
-          height: 12px;
-          background: #f0f0f0;
-          border-radius: 6px;
-          overflow: hidden;
-          margin-bottom: 0.8rem;
-          border: 1px solid #ddd;
-        }
-        .progress-bar {
-          height: 100%;
-          background: linear-gradient(90deg, #C51720, #e53935);
-          transition: width 0.5s ease-out;
-        }
-        .progress-text {
-          font-size: 0.9rem;
-          color: #5d4037;
-          font-weight: 500;
-        }
-        .milestones-grid {
+        .campaign-item {
+          background: #faf7f2;
+          border: 1.5px solid #d4a373;
+          border-radius: 16px;
+          padding: 1.5rem;
           display: flex;
           flex-direction: column;
           gap: 1rem;
+          position: relative;
+          overflow: hidden;
+          transition: all 0.3s;
         }
-        .milestone-item {
-          display: flex;
-          align-items: center;
-          gap: 1rem;
-          padding: 1rem;
-          border-radius: 12px;
-          border: 1.5px solid #eee;
-          transition: all 0.2s;
-        }
-        .milestone-item.completed {
+        .campaign-item.complete {
           background: #f1f8e9;
           border-color: #8bc34a;
         }
-        .m-icon {
-          font-size: 1.5rem;
+        .campaign-item.claimed {
+          background: #f5f5f5;
+          border-color: #ddd;
+          opacity: 0.8;
         }
-        .m-info {
-          flex: 1;
+        .c-header {
           display: flex;
-          flex-direction: column;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 1rem;
         }
-        .m-label {
-          font-weight: 600;
+        .c-name {
+          font-size: 1.2rem;
+          font-weight: 700;
           color: #2d241d;
         }
-        .m-points {
+        .c-value {
+          background: #C51720;
+          color: white;
+          padding: 0.3rem 0.8rem;
+          border-radius: 20px;
+          font-size: 0.9rem;
+          font-weight: 700;
+          white-space: nowrap;
+        }
+        .c-urgency {
+          margin-top: -0.5rem;
+        }
+        .nudge-text {
           font-size: 0.85rem;
+          font-weight: 600;
+        }
+        .nudge-text.urgent {
+          color: #e65100;
+          animation: pulse 2s infinite;
+        }
+        .nudge-text.critical {
+          color: #d32f2f;
+          font-weight: 800;
+          animation: shake 1s infinite alternate;
+        }
+        .nudge-text.normal {
           color: #7d6a5e;
         }
-        .check {
-          color: #4caf50;
+        .exp-date-sub {
+          font-size: 0.75rem;
+          color: #8d6e63;
+          margin-top: 0.1rem;
+          font-weight: 500;
+        }
+        .c-progress-section {
+          margin-top: 0.5rem;
+        }
+        .c-progress-bar-container {
+          height: 10px;
+          background: #e0e0e0;
+          border-radius: 5px;
+          overflow: hidden;
+          margin-bottom: 0.5rem;
+        }
+        .c-progress-bar {
+          height: 100%;
+          background: linear-gradient(90deg, #ff9800, #ff5722);
+          transition: width 0.5s ease-out;
+        }
+        .c-progress-text {
+          font-size: 0.85rem;
+          color: #5d4037;
+          font-weight: 500;
+        }
+        .c-ready-section {
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+        }
+        .c-complete-msg {
+          font-size: 1rem;
           font-weight: 700;
+          color: #2e7d32;
+          background: #e8f5e9;
+          padding: 0.8rem;
+          border-radius: 12px;
+          text-align: center;
+          border: 1px dashed #2e7d32;
+        }
+        .c-requirement-notice {
+          font-size: 0.85rem;
+          color: #5d4037;
+          background: #fff3e0;
+          padding: 0.7rem;
+          border-radius: 8px;
+          border-left: 4px solid #ff9800;
+          line-height: 1.4;
+        }
+        .c-requirement-notice strong {
+          color: #e65100;
+        }
+        .c-claimed-msg {
+          font-size: 0.9rem;
+          font-weight: 700;
+          color: #757575;
+          text-align: center;
+          padding: 0.5rem;
+        }
+        @keyframes pulse {
+          0% { opacity: 1; }
+          50% { opacity: 0.6; }
+          100% { opacity: 1; }
+        }
+        @keyframes shake {
+          0% { transform: translateX(0); }
+          25% { transform: translateX(-2px); }
+          75% { transform: translateX(2px); }
+          100% { transform: translateX(0); }
         }
         .info-grid {
           display: grid;

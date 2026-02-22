@@ -128,8 +128,8 @@ export default function LeaderboardPage() {
                       {rec.memberId === member?.id && <span className="me-badge">Kamu</span>}
                     </div>
                     <div className="lb-stats">
-                      <span className="pts">{rec.points} pts</span>
-                      <span className="tx">{rec.numberOfTransaction} tx</span>
+                      <span className="pts">{rec.points} points</span>
+                      <span className="tx">{rec.numberOfTransaction} transaksi</span>
                     </div>
                   </div>
                 ))}
