@@ -77,7 +77,12 @@ export default function LeaderboardPage() {
       const m = members[r.memberId];
       return m?.category === selectedCategory;
     })
-    .sort((a, b) => b.points - a.points);
+    .sort((a, b) => {
+      if (b.points !== a.points) {
+        return b.points - a.points;
+      }
+      return b.amountSpent - a.amountSpent;
+    });
 
   const myRank = filteredRecords.findIndex(r => r.memberId === member?.id) + 1;
 
