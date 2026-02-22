@@ -15,6 +15,8 @@ export default function DashboardPage() {
   const [liveMember, setLiveMember] = useState<Member | null>(null);
   const [voucherGroups, setVoucherGroups] = useState<VoucherGroup[]>([]);
   const [userVouchers, setUserVouchers] = useState<Voucher[]>([]);
+  const [showModal, setShowModal] = useState(false);
+  const [selectedVoucher, setSelectedVoucher] = useState<Voucher | null>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -147,7 +149,16 @@ export default function DashboardPage() {
                     }
 
                     return (
-                      <div key={idx} className={`campaign-item ${isClaimed ? 'claimed' : isReadyToClaim ? 'complete' : ''}`}>
+                      <div
+                        key={idx}
+                        className={`campaign-item ${isClaimed ? 'claimed' : isReadyToClaim ? 'complete' : ''} ${isReadyToClaim ? 'clickable' : ''}`}
+                        onClick={() => {
+                          if (isReadyToClaim && matchVoucher) {
+                            setSelectedVoucher(matchVoucher);
+                            setShowModal(true);
+                          }
+                        }}
+                      >
                         <div className="c-header">
                           <span className="c-name">{group.voucherName}</span>
                           <span className="c-value">Cashback Rp{group.value.toLocaleString('id-ID')}</span>
@@ -211,6 +222,32 @@ export default function DashboardPage() {
             )}
           </div>
         </div>
+
+        {showModal && selectedVoucher && (
+          <div className="modal-overlay" onClick={() => setShowModal(false)}>
+            <div className="voucher-modal animate-pop-in" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h3>Redeem Voucher</h3>
+                <button className="close-btn" onClick={() => setShowModal(false)}>×</button>
+              </div>
+              <div className="modal-body">
+                <div className="voucher-info">
+                  <span className="v-label">Voucher Name</span>
+                  <p className="v-value">{selectedVoucher.voucherName}</p>
+                </div>
+                <div className="voucher-info">
+                  <span className="v-label">Voucher ID</span>
+                  <div className="id-container">
+                    <p className="v-id">{selectedVoucher.voucherId || "N/A"}</p>
+                  </div>
+                </div>
+                <div className="modal-instructions">
+                  <p>Tunjukkan kode ini kepada kasir untuk menukarkan voucher cashback Anda.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
 
       <style jsx>{`
@@ -333,6 +370,14 @@ export default function DashboardPage() {
           background: #f5f5f5;
           border-color: #ddd;
           opacity: 0.8;
+        }
+        .campaign-item.clickable {
+          cursor: pointer;
+        }
+        .campaign-item.clickable:hover {
+          transform: translateY(-4px);
+          box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+          border-color: #4caf50;
         }
         .c-header {
           display: flex;
@@ -464,6 +509,106 @@ export default function DashboardPage() {
           .info-grid {
             grid-template-columns: 1fr;
           }
+        }
+        
+        /* Modal Styles */
+        .modal-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(0,0,0,0.7);
+          backdrop-filter: blur(4px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 1.5rem;
+          z-index: 1000;
+        }
+        .voucher-modal {
+          background: white;
+          width: 100%;
+          max-width: 400px;
+          border-radius: 24px;
+          border: 2px solid #000;
+          overflow: hidden;
+          box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+        }
+        .animate-pop-in {
+          animation: popIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        @keyframes popIn {
+          0% { transform: scale(0.9); opacity: 0; }
+          100% { transform: scale(1); opacity: 1; }
+        }
+        .modal-header {
+          padding: 1.5rem;
+          background: #C51720;
+          color: white;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .modal-header h3 { margin: 0; font-size: 1.25rem; }
+        .close-btn {
+          background: rgba(255,255,255,0.2);
+          border: none;
+          color: white;
+          font-size: 1.8rem;
+          cursor: pointer;
+          width: 32px;
+          height: 32px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 50%;
+          line-height: 1;
+        }
+        .modal-body {
+          padding: 2rem;
+          display: flex;
+          flex-direction: column;
+          gap: 1.5rem;
+        }
+        .voucher-info {
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+        }
+        .v-label {
+          font-size: 0.85rem;
+          color: #8d6e63;
+          text-transform: uppercase;
+          font-weight: 700;
+          letter-spacing: 0.05em;
+        }
+        .v-value {
+          font-size: 1.2rem;
+          font-weight: 700;
+          color: #2d241d;
+        }
+        .id-container {
+          background: #faf7f2;
+          border: 2px dashed #d4a373;
+          padding: 1rem;
+          border-radius: 12px;
+          text-align: center;
+        }
+        .v-id {
+          font-family: 'Monaco', 'Consolas', monospace;
+          font-size: 1.8rem;
+          font-weight: 800;
+          color: #C51720;
+          letter-spacing: 0.1em;
+        }
+        .modal-instructions {
+          font-size: 0.9rem;
+          color: #5d4037;
+          text-align: center;
+          line-height: 1.5;
+          padding-top: 0.5rem;
+          border-top: 1px solid #eee;
         }
         .loading-screen {
           height: 100vh;
