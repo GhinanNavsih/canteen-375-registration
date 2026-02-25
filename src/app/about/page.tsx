@@ -215,6 +215,7 @@ export default function AboutPage() {
           font-size: 0.95rem;
           color: #5d4037;
           line-height: 1.6;
+          text-align: justify;
         }
         .about-section-desc strong {
           color: #2d241d;
