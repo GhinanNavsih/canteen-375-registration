@@ -16,9 +16,15 @@ export default function DashboardPage() {
   const [liveMember, setLiveMember] = useState<Member | null>(null);
   const [voucherGroups, setVoucherGroups] = useState<VoucherGroup[]>([]);
   const [userVouchers, setUserVouchers] = useState<Voucher[]>([]);
+  const [competitionPoints, setCompetitionPoints] = useState<number>(0);
+  const [competitionData, setCompetitionData] = useState<any>(null);
+  const [userRank, setUserRank] = useState<number | null>(null);
+  const [allMembers, setAllMembers] = useState<Record<string, Member>>({});
   const [showModal, setShowModal] = useState(false);
   const [selectedVoucher, setSelectedVoucher] = useState<Voucher | null>(null);
   const router = useRouter();
+
+  const currentMonth = new Date().toISOString().slice(0, 7);
 
   useEffect(() => {
     if (!sessionLoading && !member) {
@@ -27,10 +33,35 @@ export default function DashboardPage() {
     }
 
     if (member) {
+      // Fetch all members once to know categories for ranking
+      const fetchMembers = async () => {
+        const { getDocs, collection } = await import("firebase/firestore");
+        const snap = await getDocs(collection(db, "Members"));
+        const membersMap: Record<string, Member> = {};
+        snap.forEach(doc => {
+          const tid = doc.id.trim();
+          membersMap[tid] = { id: tid, ...doc.data() } as Member;
+        });
+        setAllMembers(membersMap);
+      };
+      fetchMembers();
+
       // Listen for live updates to points
       const unsub = onSnapshot(doc(db, "Members", member.id), (docSnap) => {
         if (docSnap.exists()) {
           setLiveMember({ id: docSnap.id, ...docSnap.data() } as Member);
+        }
+      });
+
+      // Listen for competition points
+      const unsubCompetition = onSnapshot(doc(db, "competitionRecords", currentMonth), (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setCompetitionData(data);
+          const userStats = data[member.id];
+          if (userStats) {
+            setCompetitionPoints(userStats.customerPoints || 0);
+          }
         }
       });
 
@@ -64,17 +95,58 @@ export default function DashboardPage() {
 
       return () => {
         unsub();
+        unsubCompetition();
         unsubGroups();
         unsubVouchers.forEach(fn => fn());
       };
     }
-  }, [member, sessionLoading, router]);
+  }, [member, sessionLoading, router, currentMonth]);
+
+  // Reactive Rank Calculation
+  useEffect(() => {
+    if (member && competitionData && Object.keys(allMembers).length > 0) {
+      const targetId = member.id.trim();
+      const targetCategory = (liveMember?.category || member.category || "").trim();
+
+      const records: any[] = [];
+      Object.entries(competitionData).forEach(([mId, stats]: [string, any]) => {
+        const trimmedMId = mId.trim();
+        const mInfo = allMembers[trimmedMId];
+
+        // Match the logic used in LeaderboardPage
+        if (mInfo && mInfo.category?.trim() === targetCategory) {
+          records.push({
+            memberId: trimmedMId,
+            points: stats.customerPoints || 0,
+            amountSpent: stats.amountSpent || 0,
+            numberOfTransaction: stats.numberOfTransaction || 0
+          });
+        }
+      });
+
+      const sorted = records.sort((a, b) => {
+        if (b.points !== a.points) return b.points - a.points;
+        if (b.amountSpent !== a.amountSpent) return b.amountSpent - a.amountSpent;
+        return b.numberOfTransaction - a.numberOfTransaction;
+      });
+
+      const rank = sorted.findIndex(r => r.memberId === targetId) + 1;
+      setUserRank(rank > 0 ? rank : null);
+    }
+  }, [member, competitionData, allMembers, liveMember]);
 
   if (sessionLoading || !member) {
     return <div className="loading-screen">Loading...</div>;
   }
 
-  const currentPoints = liveMember?.points || member.points || 0;
+  const getRankEmoji = (rank: number) => {
+    if (rank === 1) return "🥇";
+    if (rank === 2) return "🥈";
+    if (rank === 3) return "🥉";
+    return "🏆";
+  };
+
+  const currentPoints = competitionPoints;
 
   return (
     <div className="dashboard-wrapper">
@@ -93,11 +165,19 @@ export default function DashboardPage() {
             </div>
 
             <div className="points-display">
-              <div className="points-value">
-                <span className="number">{currentPoints}</span>
-                <span className="label">Total Points</span>
+              <div className="points-content">
+                <div className="points-main-row">
+                  <span className="number">{currentPoints}</span>
+                  {userRank && (
+                    <div className="dashboard-rank-badge">
+                      <span className="rank-emoji">{getRankEmoji(userRank)}</span>
+                      <span className="rank-text">#{userRank}</span>
+                    </div>
+                  )}
+                </div>
+                <span className="label">Jumlah Points Anda Bulan Ini</span>
               </div>
-              <div className="points-icon">⭐</div>
+              <div className="points-icon-large">⭐</div>
             </div>
           </div>
 
@@ -320,18 +400,43 @@ export default function DashboardPage() {
           display: flex;
           flex-direction: column;
         }
-        .points-value .number {
-          font-size: 2.5rem;
-          font-weight: 700;
+        .points-content .number {
+          font-size: 3.2rem;
+          font-weight: 800;
           line-height: 1;
         }
-        .points-value .label {
+        .points-content .label {
           font-size: 0.9rem;
           opacity: 0.9;
           margin-top: 0.2rem;
         }
-        .points-icon {
-          font-size: 3rem;
+        .points-main-row {
+          display: flex;
+          align-items: baseline;
+          gap: 0.8rem;
+        }
+        .dashboard-rank-badge {
+          background: rgba(255, 255, 255, 0.2);
+          backdrop-filter: blur(8px);
+          padding: 0.25rem 0.75rem;
+          border-radius: 30px;
+          display: flex;
+          align-items: center;
+          gap: 0.4rem;
+          border: 1px solid rgba(255, 255, 255, 0.3);
+          transform: translateY(-8px);
+        }
+        .rank-emoji {
+          font-size: 1.1rem;
+        }
+        .rank-text {
+          font-size: 1.1rem;
+          font-weight: 800;
+          letter-spacing: -0.02em;
+        }
+        .points-icon-large {
+          font-size: 3.5rem;
+          filter: drop-shadow(0 4px 10px rgba(0,0,0,0.2));
         }
         .campaigns-card {
           background: white;
