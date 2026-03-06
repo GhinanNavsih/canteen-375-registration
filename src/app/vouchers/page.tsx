@@ -79,16 +79,31 @@ export default function VouchersPage() {
   const now = new Date();
 
   // Active Vouchers: Not claimed yet, and either active or future
-  const activeVouchers = voucherGroups.filter(g => {
+  // Combine all vouchers (from groups + standalones like birthday)
+  const activeVouchers: any[] = [];
+
+  // 1. Group-based vouchers
+  voucherGroups.forEach(g => {
     const isExpired = g.expireDate && g.expireDate.toDate() < now;
-    if (isExpired) return false;
+    if (!isExpired) {
+      const matchVoucher = userVouchers.find(v =>
+        v.voucherGroupId && v.voucherGroupId.trim() === g.voucherGroupId?.trim()
+      );
+      if (matchVoucher?.status !== "CLAIMED") {
+        activeVouchers.push({ type: 'group', data: g, matchVoucher });
+      }
+    }
+  });
 
-    // Match strictly by voucherGroupId
-    const matchVoucher = userVouchers.find(v =>
-      v.voucherGroupId && v.voucherGroupId.trim() === g.voucherGroupId?.trim()
-    );
-
-    return matchVoucher?.status !== "CLAIMED";
+  // 2. Standalone vouchers (like BDAY) that belong directly to the user
+  userVouchers.forEach(v => {
+    // If it's not tied to a voucherGroup AND it's not claimed AND not expired
+    if (!v.voucherGroupId && v.status !== "CLAIMED") {
+      const isExpired = v.expireDate && v.expireDate.toDate() < now;
+      if (!isExpired) {
+        activeVouchers.push({ type: 'standalone', data: v, matchVoucher: v });
+      }
+    }
   });
 
   // History Vouchers: Claimed
@@ -125,19 +140,25 @@ export default function VouchersPage() {
               {view === "active" ? (
                 <div className="vouchers-grid">
                   {activeVouchers.length > 0 ? (
-                    activeVouchers.map((group, idx) => {
-                      const matchVoucher = userVouchers.find(v =>
-                        v.voucherGroupId && v.voucherGroupId.trim() === group.voucherGroupId?.trim()
-                      );
+                    activeVouchers.map((item, idx) => {
+                      const isGroup = item.type === 'group';
+                      const { data, matchVoucher } = item;
+
+                      const voucherName = isGroup ? data.voucherName : data.voucherName;
+                      const value = isGroup ? data.value : data.value;
+                      const transactionReq = isGroup ? data.transactionRequirement : data.transactionRequirement;
 
                       const userProgressPoints = matchVoucher ? matchVoucher.userPoints : 0;
-                      const percent = Math.min(100, (userProgressPoints / group.threshold) * 100);
-                      const remaining = Math.max(0, group.threshold - userProgressPoints);
-                      const status = matchVoucher?.status || "IN_PROGRESS";
-                      const isReadyToClaim = status === "READY_TO_CLAIM" || (userProgressPoints >= group.threshold);
+                      // Standalone vouchers like BIRTHDAY don't have a threshold, they are ready immediately
+                      const threshold = isGroup ? data.threshold : 0;
+                      const percent = isGroup ? Math.min(100, (userProgressPoints / threshold) * 100) : 100;
+                      const remaining = isGroup ? Math.max(0, threshold - userProgressPoints) : 0;
 
-                      const expDate = group.expireDate.toDate();
-                      const activeDate = group.activeDate?.toDate();
+                      const status = matchVoucher?.status || "IN_PROGRESS";
+                      const isReadyToClaim = status === "READY_TO_CLAIM" || (isGroup && userProgressPoints >= threshold);
+
+                      const expDate = isGroup ? data.expireDate.toDate() : data.expireDate.toDate();
+                      const activeDate = isGroup ? data.activeDate?.toDate() : null;
                       const isFuture = activeDate && activeDate > now;
 
                       const diffMs = expDate.getTime() - now.getTime();
@@ -165,8 +186,8 @@ export default function VouchersPage() {
                           }}
                         >
                           <div className="v-header">
-                            <span className="v-name">{group.voucherName}</span>
-                            <span className="v-value">Rp{group.value.toLocaleString('id-ID')}</span>
+                            <span className="v-name">{voucherName}</span>
+                            <span className="v-value">Rp{value.toLocaleString('id-ID')}</span>
                           </div>
 
                           {isFuture ? (
@@ -187,7 +208,7 @@ export default function VouchersPage() {
                                     Voucher Siap Diklaim! 🎁
                                   </div>
                                   <div className="v-requirement-notice">
-                                    Min. transaksi <strong>Rp{(group.transactionRequirement || 0).toLocaleString('id-ID')}</strong>
+                                    Min. transaksi <strong>Rp{(transactionReq || 0).toLocaleString('id-ID')}</strong>
                                   </div>
                                 </div>
                               ) : (

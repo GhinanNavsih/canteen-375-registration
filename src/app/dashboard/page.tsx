@@ -181,108 +181,126 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {voucherGroups.filter(g => {
-            const isNotExpired = g.expireDate && g.expireDate.toDate() > new Date();
-            const matchVoucher = userVouchers.find(v =>
-              v.voucherGroupId && v.voucherGroupId.trim() === g.voucherGroupId?.trim()
-            );
-            const isClaimed = matchVoucher?.status === "CLAIMED";
-            return isNotExpired && !isClaimed;
-          }).length > 0 && (
+          {(() => {
+            const now = new Date();
+            const activeVouchers: any[] = [];
+
+            // 1. Group-based vouchers
+            voucherGroups.forEach(g => {
+              const isExpired = g.expireDate && g.expireDate.toDate() < now;
+              if (!isExpired) {
+                const matchVoucher = userVouchers.find(v =>
+                  v.voucherGroupId && v.voucherGroupId.trim() === g.voucherGroupId?.trim()
+                );
+                if (matchVoucher?.status !== "CLAIMED") {
+                  activeVouchers.push({ type: 'group', data: g, matchVoucher });
+                }
+              }
+            });
+
+            // 2. Standalone vouchers (like BDAY) that belong directly to the user
+            userVouchers.forEach(v => {
+              if (!v.voucherGroupId && v.status !== "CLAIMED") {
+                const isExpired = v.expireDate && v.expireDate.toDate() < now;
+                if (!isExpired) {
+                  activeVouchers.push({ type: 'standalone', data: v, matchVoucher: v });
+                }
+              }
+            });
+
+            if (activeVouchers.length === 0) return null;
+
+            return (
               <div className="campaigns-card">
                 <div className="card-header-with-link">
                   <h3>🎉 Promo Terbatas!</h3>
                   <Link href="/vouchers" className="view-all-link">Lihat Semua →</Link>
                 </div>
                 <div className="campaigns-grid">
-                  {voucherGroups
-                    .filter(g => {
-                      const isNotExpired = g.expireDate && g.expireDate.toDate() > new Date();
-                      const matchVoucher = userVouchers.find(v =>
-                        v.voucherGroupId && v.voucherGroupId.trim() === g.voucherGroupId?.trim()
-                      );
-                      const isClaimed = matchVoucher?.status === "CLAIMED";
-                      return isNotExpired && !isClaimed;
-                    })
-                    .map((group, idx) => {
-                      const matchVoucher = userVouchers.find(v =>
-                        v.voucherGroupId && v.voucherGroupId.trim() === group.voucherGroupId?.trim()
-                      );
-                      const userProgressPoints = matchVoucher ? matchVoucher.userPoints : 0;
-                      const percent = Math.min(100, (userProgressPoints / group.threshold) * 100);
-                      const remaining = Math.max(0, group.threshold - userProgressPoints);
-                      const status = matchVoucher?.status || "IN_PROGRESS";
-                      const isClaimed = status === "CLAIMED";
-                      const isReadyToClaim = status === "READY_TO_CLAIM" || (userProgressPoints >= group.threshold && !isClaimed);
+                  {activeVouchers.map((item, idx) => {
+                    const isGroup = item.type === 'group';
+                    const { data, matchVoucher } = item;
 
-                      const expDate = group.expireDate.toDate();
-                      const now = new Date();
-                      const diffMs = expDate.getTime() - now.getTime();
-                      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-                      const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                    const voucherName = isGroup ? data.voucherName : data.voucherName;
+                    const value = isGroup ? data.value : data.value;
+                    const transactionReq = isGroup ? data.transactionRequirement : data.transactionRequirement;
 
-                      let timerText = "";
-                      if (diffDays > 0) {
-                        timerText = `Berakhir dalam ${diffDays} hari ${diffHours} jam`;
-                      } else if (diffHours > 0) {
-                        timerText = `Berakhir dalam ${diffHours} jam lagi!`;
-                      } else {
-                        timerText = "Berakhir segera!";
-                      }
+                    const userProgressPoints = matchVoucher ? matchVoucher.userPoints : 0;
+                    const threshold = isGroup ? data.threshold : 0;
+                    const percent = isGroup ? Math.min(100, (userProgressPoints / threshold) * 100) : 100;
+                    const remaining = isGroup ? Math.max(0, threshold - userProgressPoints) : 0;
 
-                      return (
-                        <div
-                          key={idx}
-                          className={`campaign-item ${isReadyToClaim ? 'complete' : ''} ${isReadyToClaim ? 'clickable' : ''}`}
-                          onClick={() => {
-                            if (isReadyToClaim && matchVoucher) {
-                              setSelectedVoucher(matchVoucher);
-                              setShowModal(true);
-                            }
-                          }}
-                        >
-                          <div className="c-header">
-                            <span className="c-name">{group.voucherName}</span>
-                            <span className="c-value">Cashback Rp{group.value.toLocaleString('id-ID')}</span>
-                          </div>
+                    const status = matchVoucher?.status || "IN_PROGRESS";
+                    const isClaimed = status === "CLAIMED";
+                    const isReadyToClaim = status === "READY_TO_CLAIM" || (isGroup && userProgressPoints >= threshold && !isClaimed);
 
-                          <div className="c-urgency">
-                            <span className={`nudge-text ${diffMs < 86400000 ? 'critical' : diffMs < 604800000 ? 'urgent' : 'normal'}`}>
-                              {diffMs < 604800000 ? timerText + " ⏳" : `Berlaku s/d ${expDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}`}
-                            </span>
-                            {diffMs < 604800000 && (
-                              <div className="exp-date-sub">
-                                s/d {expDate.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} • {expDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
-                              </div>
-                            )}
-                          </div>
+                    const expDate = isGroup ? data.expireDate.toDate() : data.expireDate.toDate();
+                    const diffMs = expDate.getTime() - now.getTime();
+                    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+                    const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
 
+                    let timerText = "";
+                    if (diffDays > 0) {
+                      timerText = `Berakhir dalam ${diffDays} hari ${diffHours} jam`;
+                    } else if (diffHours > 0) {
+                      timerText = `Berakhir dalam ${diffHours} jam lagi!`;
+                    } else {
+                      timerText = "Berakhir segera!";
+                    }
 
-                          {isReadyToClaim ? (
-                            <div className="c-ready-section">
-                              <div className="c-complete-msg">
-                                Voucher Siap Diklaim! 🎁
-                              </div>
-                              <div className="c-requirement-notice">
-                                Minimal transaksi <strong>Rp{(group.transactionRequirement || 0).toLocaleString('id-ID')}</strong> untuk aktivasi cashback.
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="c-progress-section">
-                              <div className="c-progress-bar-container">
-                                <div className="c-progress-bar" style={{ width: `${percent}%` }}></div>
-                              </div>
-                              <p className="c-progress-text">
-                                Kumpulkan {remaining} poin lagi untuk klaim voucher!
-                              </p>
+                    return (
+                      <div
+                        key={idx}
+                        className={`campaign-item ${isReadyToClaim ? 'complete' : ''} ${isReadyToClaim ? 'clickable' : ''}`}
+                        onClick={() => {
+                          if (isReadyToClaim && matchVoucher) {
+                            setSelectedVoucher(matchVoucher);
+                            setShowModal(true);
+                          }
+                        }}
+                      >
+                        <div className="c-header">
+                          <span className="c-name">{voucherName}</span>
+                          <span className="c-value">Cashback Rp{value.toLocaleString('id-ID')}</span>
+                        </div>
+
+                        <div className="c-urgency">
+                          <span className={`nudge-text ${diffMs < 86400000 ? 'critical' : diffMs < 604800000 ? 'urgent' : 'normal'}`}>
+                            {diffMs < 604800000 ? timerText + " ⏳" : `Berlaku s/d ${expDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}`}
+                          </span>
+                          {diffMs < 604800000 && (
+                            <div className="exp-date-sub">
+                              s/d {expDate.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} • {expDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
                             </div>
                           )}
                         </div>
-                      );
-                    })}
+
+                        {isReadyToClaim ? (
+                          <div className="c-ready-section">
+                            <div className="c-complete-msg">
+                              Voucher Siap Diklaim! 🎁
+                            </div>
+                            <div className="c-requirement-notice">
+                              Minimal transaksi <strong>Rp{(transactionReq || 0).toLocaleString('id-ID')}</strong> untuk aktivasi cashback.
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="c-progress-section">
+                            <div className="c-progress-bar-container">
+                              <div className="c-progress-bar" style={{ width: `${percent}%` }}></div>
+                            </div>
+                            <p className="c-progress-text">
+                              Kumpulkan {remaining} poin lagi untuk klaim voucher!
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
-            )}
+            );
+          })()}
 
           <div className="info-grid">
             <div className="info-item">

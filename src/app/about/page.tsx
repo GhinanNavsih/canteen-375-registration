@@ -113,6 +113,23 @@ export default function AboutPage() {
             </div>
           </div>
 
+          {/* Campaign 3: Birthday Reward */}
+          <div className="about-card">
+            <div className="about-card-header">
+              <span>🎂</span>
+              <h2>Hadiah Ulang Tahun</h2>
+            </div>
+
+            <p className="about-section-desc">
+              Kami ingin merayakan hari istimewamu! Bagi kamu yang sudah terdaftar sebagai anggota, nikmati voucher belanja senilai <strong>Rp10.000</strong> sebagai hadiah spesial di hari ulang tahunmu.
+            </p>
+
+            <div className="about-note">
+              <span>🎁</span>
+              <p>Voucher akan tersedia otomatis di halaman Vouchers pada hari ulang tahunmu dan berlaku selama 1 hari.</p>
+            </div>
+          </div>
+
           {/* Action Buttons */}
           <div className="about-actions-card">
             <Link href="/leaderboard" className="btn-primary-red">

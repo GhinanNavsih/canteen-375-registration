@@ -185,9 +185,25 @@ export default function RegistrationPage() {
             <h2>Selamat Datang di Canteen 375!</h2>
             <p>Terima kasih telah mendaftar, {formData.fullName}. Akun member Anda sekarang aktif.</p>
           </div>
-          <button className="btn-submit" onClick={() => window.location.reload()}>
-            Daftarkan Member Lain
-          </button>
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px", width: "100%" }}>
+            <button
+              className="btn-submit"
+              onClick={() => window.location.href = '/login'}
+            >
+              Login ke Akun
+            </button>
+            <button
+              className="btn-submit"
+              style={{
+                backgroundColor: "transparent",
+                color: "var(--primary)",
+                border: "2px solid var(--primary)"
+              }}
+              onClick={() => window.location.reload()}
+            >
+              Daftarkan Member Lain
+            </button>
+          </div>
         </div>
       </main>
     );
