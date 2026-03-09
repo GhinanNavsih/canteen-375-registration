@@ -58,7 +58,8 @@ const ASRAMA_LIST = [
   "Asrama XXV Al As'Adiyah",
   "Asrama XXVI Al Hasyimi",
   "Asrama XXVII Al Furqon",
-  "Asrama XXVIII Ar Rifa'I"
+  "Asrama XXVIII Ar Rifa'I",
+  "Kampung"
 ];
 
 const FACULTY_MAJOR_MAP: Record<string, string[]> = {

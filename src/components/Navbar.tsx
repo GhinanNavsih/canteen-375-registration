@@ -17,20 +17,20 @@ export default function Navbar() {
       <div className="nav-container">
         <div className="nav-links">
           {member && (
-            <Link href="/dashboard" className={`nav-link ${isActive("/dashboard") ? "active" : ""}`}>
-              Dashboard
+            <Link href="/about" className={`nav-link ${isActive("/about") ? "active" : ""}`}>
+              About
             </Link>
           )}
-          <Link href="/leaderboard" className={`nav-link ${isActive("/leaderboard") ? "active" : ""}`}>
-            Leaderboard
+          <Link href="/dashboard" className={`nav-link ${isActive("/dashboard") ? "active" : ""}`}>
+            Dashboard
           </Link>
           {member && (
-            <Link href="/vouchers" className={`nav-link ${isActive("/vouchers") ? "active" : ""}`}>
-              Vouchers
+            <Link href="/leaderboard" className={`nav-link ${isActive("/leaderboard") ? "active" : ""}`}>
+              Leaderboard
             </Link>
           )}
-          <Link href="/about" className={`nav-link ${isActive("/about") ? "active" : ""}`}>
-            Tentang
+          <Link href="/vouchers" className={`nav-link ${isActive("/vouchers") ? "active" : ""}`}>
+            Vouchers
           </Link>
         </div>
         {member ? (

@@ -7,7 +7,7 @@ import Image from "next/image";
 import { useMember } from "@/context/MemberContext";
 import Navbar from "@/components/Navbar";
 import { db } from "@/lib/firebase";
-import { doc, onSnapshot, collection, query, where, or } from "firebase/firestore";
+import { doc, onSnapshot, collection, query, where, or, addDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import { Member } from "@/types/member";
 import { VoucherGroup, Voucher } from "@/types/voucher";
 
@@ -22,6 +22,8 @@ export default function DashboardPage() {
   const [allMembers, setAllMembers] = useState<Record<string, Member>>({});
   const [showModal, setShowModal] = useState(false);
   const [selectedVoucher, setSelectedVoucher] = useState<Voucher | null>(null);
+  const [feedbackContent, setFeedbackContent] = useState("");
+  const [feedbackStatus, setFeedbackStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
   const router = useRouter();
 
   const currentMonth = new Date().toISOString().slice(0, 7);
@@ -134,6 +136,34 @@ export default function DashboardPage() {
       setUserRank(rank > 0 ? rank : null);
     }
   }, [member, competitionData, allMembers, liveMember]);
+
+  const handleFeedbackSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!feedbackContent.trim() || !member) return;
+
+    setFeedbackStatus("submitting");
+    try {
+      const now = new Date();
+      const dateStr = now.toISOString().slice(0, 10).replace(/-/g, ""); // YYYYMMDD
+      const randomStr = Math.random().toString(36).substring(2, 6).toUpperCase();
+      const customId = `FB-${dateStr}-${randomStr}`;
+
+      await setDoc(doc(db, "feedbacks", customId), {
+        memberId: member.id,
+        memberName: member.fullName,
+        content: feedbackContent,
+        timestamp: serverTimestamp(),
+        status: "pending"
+      });
+      setFeedbackStatus("success");
+      setFeedbackContent("");
+      setTimeout(() => setFeedbackStatus("idle"), 3000);
+    } catch (error) {
+      console.error("Error submitting feedback:", error);
+      setFeedbackStatus("error");
+      setTimeout(() => setFeedbackStatus("idle"), 3000);
+    }
+  };
 
   if (sessionLoading || !member) {
     return <div className="loading-screen">Loading...</div>;
@@ -302,21 +332,31 @@ export default function DashboardPage() {
             );
           })()}
 
-          <div className="info-grid">
-            <div className="info-item">
-              <h4>Email</h4>
-              <p>{member.email}</p>
+          <div className="feedback-card">
+            <div className="feedback-header">
+              <h3>Kritik & Saran</h3>
+              <p>Bantu kami untuk terus menjadi lebih baik.</p>
             </div>
-            <div className="info-item">
-              <h4>Tanggal Lahir</h4>
-              <p>{member.dateOfBirth}</p>
-            </div>
-            {member.phoneNumber && (
-              <div className="info-item">
-                <h4>No. Telepon</h4>
-                <p>{member.phoneNumber}</p>
+            <form onSubmit={handleFeedbackSubmit} className="feedback-form">
+              <textarea
+                value={feedbackContent}
+                onChange={(e) => setFeedbackContent(e.target.value)}
+                placeholder="Tuliskan pengalaman, ide, atau uneg-uneg Anda di sini..."
+                rows={4}
+                required
+                disabled={feedbackStatus === "submitting"}
+              />
+              <div className="feedback-actions">
+                <button
+                  type="submit"
+                  disabled={feedbackStatus === "submitting" || feedbackStatus === "success" || !feedbackContent.trim()}
+                  className={`btn-submit ${feedbackStatus === "submitting" ? "loading" : ""} ${feedbackStatus === "success" ? "success" : ""}`}
+                >
+                  {feedbackStatus === "submitting" ? "Mengirim..." :
+                    feedbackStatus === "success" ? "Terima kasih atas masukannya!" : "Kirim"}
+                </button>
               </div>
-            )}
+            </form>
           </div>
         </div>
 
@@ -364,7 +404,7 @@ export default function DashboardPage() {
           flex-direction: column;
           gap: 1.5rem;
         }
-        .profile-card, .info-grid {
+        .profile-card {
           background: white;
           border-radius: 20px;
           padding: 2rem;
@@ -628,27 +668,94 @@ export default function DashboardPage() {
           75% { transform: translateX(2px); }
           100% { transform: translateX(0); }
         }
-        .info-grid {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 1.5rem;
+        
+        .feedback-card {
+          background: white;
+          border-radius: 20px;
+          padding: 2rem;
+          box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+          border: 1.5px solid #000;
         }
-        .info-item h4 {
-          font-size: 0.85rem;
-          color: #8d6e63;
-          margin-bottom: 0.3rem;
-          text-transform: uppercase;
-          letter-spacing: 0.05em;
+        .feedback-header {
+          margin-bottom: 1.5rem;
         }
-        .info-item p {
-          font-weight: 600;
+        .feedback-header h3 {
+          margin: 0 0 0.5rem 0;
           color: #2d241d;
+          font-size: 1.4rem;
         }
-        @media (max-width: 480px) {
-          .info-grid {
-            grid-template-columns: 1fr;
-          }
+        .feedback-header p {
+          margin: 0;
+          font-size: 0.9rem;
+          color: #5d4037;
         }
+        .feedback-form {
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+        }
+        .feedback-form textarea {
+          width: 100%;
+          padding: 1rem;
+          border-radius: 12px;
+          border: 1.5px solid #d4a373;
+          background: #faf7f2;
+          font-family: inherit;
+          font-size: 0.95rem;
+          color: #2d241d;
+          resize: vertical;
+          min-height: 100px;
+          transition: all 0.2s;
+        }
+        .feedback-form textarea:focus {
+          outline: none;
+          border-color: #C51720;
+          background: white;
+          box-shadow: 0 4px 12px rgba(197, 23, 32, 0.1);
+        }
+        .feedback-actions {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .feedback-msg {
+          font-size: 0.85rem;
+          font-weight: 600;
+        }
+        .feedback-msg.success { color: #2e7d32; }
+        .feedback-msg.error { color: #d32f2f; }
+        
+        .btn-submit {
+          background: #C51720;
+          color: white;
+          border: none;
+          padding: 0.8rem 1.5rem;
+          border-radius: 30px;
+          font-weight: 700;
+          font-size: 0.95rem;
+          cursor: pointer;
+          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+          width: 100%;
+        }
+        .btn-submit:hover:not(:disabled) {
+          transform: translateY(-2px);
+          box-shadow: 0 4px 10px rgba(197, 23, 32, 0.3);
+        }
+        .btn-submit.success {
+          background: #2e7d32;
+          cursor: default;
+          transform: none;
+          box-shadow: 0 4px 10px rgba(46, 125, 50, 0.2);
+        }
+        .btn-submit:disabled:not(.success) {
+          background: #ccc;
+          color: #888;
+          cursor: not-allowed;
+        }
+        .btn-submit.loading {
+          opacity: 0.8;
+        }
+
         
         /* Modal Styles */
         .modal-overlay {

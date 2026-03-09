@@ -29,3 +29,12 @@ export interface CompetitionRecord {
     memberName: string;
     memberId: string;
 }
+
+export interface Feedback {
+    id?: string;
+    memberId: string;
+    memberName: string;
+    content: string;
+    timestamp: any;
+    status: string;
+}
