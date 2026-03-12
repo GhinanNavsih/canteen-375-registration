@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Image from "next/image";
-import { db } from "@/lib/firebase";
+import { createUserWithEmailAndPassword } from "firebase/auth";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { auth, db } from "@/lib/firebase";
 
 type Category = "Santri" | "Mahasiswa" | "Guru/Dosen" | "";
 
@@ -86,12 +87,15 @@ export default function RegistrationPage() {
     gender: "",
     dateOfBirth: "",
     email: "",
+    password: "",
+    confirmPassword: "",
     category: "" as Category,
+    // Global optional field — required for Mahasiswa/Guru, optional for Santri
+    phoneNumber: "+62",
     // Santri fields
     unitEducation: "",
     asrama: "",
     // Mahasiswa fields
-    phoneNumber: "+62",
     faculty: "",
     major: "",
     residence: "",
@@ -99,6 +103,9 @@ export default function RegistrationPage() {
     institution: "",
     workLocation: ""
   });
+
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     let { name, value } = e.target;
@@ -108,7 +115,6 @@ export default function RegistrationPage() {
       if (!value.startsWith("+62")) {
         value = "+62" + value.replace(/^\+?6?2?/, "");
       }
-      // Allow only digits after +62
       const prefix = "+62";
       const rest = value.slice(3).replace(/\D/g, "");
       value = prefix + rest;
@@ -118,7 +124,6 @@ export default function RegistrationPage() {
     if (name === "dateOfBirth") {
       const numbers = value.replace(/\D/g, "");
       const charCount = numbers.length;
-
       if (charCount <= 2) {
         value = numbers;
       } else if (charCount <= 4) {
@@ -128,38 +133,88 @@ export default function RegistrationPage() {
       }
     }
 
+    // Reset cascading category-specific fields when category changes
+    if (name === "category") {
+      setFormData((prev) => ({
+        ...prev,
+        category: value as Category,
+        unitEducation: "",
+        asrama: "",
+        faculty: "",
+        major: "",
+        residence: "",
+        institution: "",
+        workLocation: "",
+      }));
+      return;
+    }
+
     setFormData((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const validate = (): string | null => {
+    if (formData.password.length < 6) {
+      return "Password minimal 6 karakter.";
+    }
+    if (formData.password !== formData.confirmPassword) {
+      return "Password dan konfirmasi password tidak cocok.";
+    }
+    // Phone required for Mahasiswa and Guru/Dosen
+    if (
+      (formData.category === "Mahasiswa" || formData.category === "Guru/Dosen") &&
+      formData.phoneNumber.length <= 3
+    ) {
+      return "Nomor telepon wajib diisi untuk kategori ini.";
+    }
+    return null;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
     setError("");
 
+    const validationError = validate();
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
+    setLoading(true);
+
     try {
-      const { category, fullName, phoneNumber } = formData;
-      let docId = "";
+      // Step 1: Create the Firebase Auth account. This is now the identity source.
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
+        formData.email,
+        formData.password
+      );
+      const { uid } = userCredential.user;
 
-      if (category === "Santri") {
-        const timestamp = Math.floor(Date.now() / 1000);
-        docId = `${fullName.replace(/\s+/g, "")}_${timestamp}`;
-      } else {
-        // Remove spaces/dashes from phone number and spaces from name
-        const cleanPhone = phoneNumber.replace(/[\s\-]/g, "");
-        docId = `${fullName.replace(/\s+/g, "")}_${cleanPhone}`;
-      }
+      // Step 2: Write the member profile to Firestore, keyed by the Auth UID.
+      // The 'password' and 'confirmPassword' fields are NEVER stored — Auth handles credentials.
+      const { password, confirmPassword, ...profileData } = formData;
 
-      const finalData = {
-        ...formData,
+      await setDoc(doc(db, "Members", uid), {
+        ...profileData,
+        uid,
+        role: "member",        // Default RBAC role — admin role set via Cloud Function Custom Claims
         points: 0,
         createdAt: serverTimestamp(),
-      };
+      });
 
-      await setDoc(doc(db, "Members", docId), finalData);
       setSuccess(true);
     } catch (err: any) {
       console.error(err);
-      setError("Pendaftaran gagal. Silakan coba lagi.");
+      const code = err.code as string;
+      if (code === "auth/email-already-in-use") {
+        setError("Email ini sudah terdaftar. Silakan login atau gunakan email lain.");
+      } else if (code === "auth/invalid-email") {
+        setError("Format email tidak valid.");
+      } else if (code === "auth/weak-password") {
+        setError("Password terlalu lemah. Gunakan minimal 6 karakter.");
+      } else {
+        setError("Pendaftaran gagal. Silakan coba lagi.");
+      }
     } finally {
       setLoading(false);
     }
@@ -189,9 +244,9 @@ export default function RegistrationPage() {
           <div style={{ display: "flex", flexDirection: "column", gap: "10px", width: "100%" }}>
             <button
               className="btn-submit"
-              onClick={() => window.location.href = '/login'}
+              onClick={() => window.location.href = '/dashboard'}
             >
-              Login ke Akun
+              Masuk ke Dashboard
             </button>
             <button
               className="btn-submit"
@@ -229,7 +284,7 @@ export default function RegistrationPage() {
         </div>
 
         <form onSubmit={handleSubmit}>
-          {/* General Fields */}
+          {/* ── General Fields ── */}
           <div className="form-group">
             <label htmlFor="fullName">Nama Lengkap</label>
             <input
@@ -283,11 +338,109 @@ export default function RegistrationPage() {
               name="email"
               placeholder="contoh@email.com"
               required
+              autoComplete="email"
               value={formData.email}
               onChange={handleInputChange}
             />
           </div>
 
+          {/* ── Password Fields ── */}
+          <div className="form-group" style={{ position: "relative" }}>
+            <label htmlFor="password">Password</label>
+            <input
+              type={showPassword ? "text" : "password"}
+              id="password"
+              name="password"
+              placeholder="Minimal 6 karakter"
+              required
+              minLength={6}
+              autoComplete="new-password"
+              value={formData.password}
+              onChange={handleInputChange}
+              style={{ paddingRight: "3rem" }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              style={{
+                position: "absolute",
+                right: "1rem",
+                top: "calc(1.6rem + 22px)",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                fontSize: "1.2rem",
+                lineHeight: 1,
+                color: "#8d6e63"
+              }}
+              aria-label={showPassword ? "Sembunyikan password" : "Tampilkan password"}
+            >
+              {showPassword ? "🙈" : "👁️"}
+            </button>
+          </div>
+
+          <div className="form-group" style={{ position: "relative" }}>
+            <label htmlFor="confirmPassword">Konfirmasi Password</label>
+            <input
+              type={showConfirmPassword ? "text" : "password"}
+              id="confirmPassword"
+              name="confirmPassword"
+              placeholder="Ulangi password Anda"
+              required
+              autoComplete="new-password"
+              value={formData.confirmPassword}
+              onChange={handleInputChange}
+              style={{ paddingRight: "3rem" }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+              style={{
+                position: "absolute",
+                right: "1rem",
+                top: "calc(1.6rem + 22px)",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                fontSize: "1.2rem",
+                lineHeight: 1,
+                color: "#8d6e63"
+              }}
+              aria-label={showConfirmPassword ? "Sembunyikan password" : "Tampilkan password"}
+            >
+              {showConfirmPassword ? "🙈" : "👁️"}
+            </button>
+            {/* Inline mismatch hint */}
+            {formData.confirmPassword.length > 0 && formData.password !== formData.confirmPassword && (
+              <p style={{ color: "var(--error)", fontSize: "0.82rem", marginTop: "0.4rem" }}>
+                Password tidak cocok.
+              </p>
+            )}
+          </div>
+
+          {/* ── Phone Number — Global field (required for Mahasiswa/Guru, optional for Santri) ── */}
+          <div className="form-group">
+            <label htmlFor="phoneNumber">
+              Nomor Telepon
+              {formData.category === "Santri" && (
+                <span style={{ fontSize: "0.8rem", fontWeight: 400, marginLeft: "0.4rem", color: "#8d6e63" }}>
+                  (opsional untuk Santri)
+                </span>
+              )}
+            </label>
+            <input
+              type="text"
+              id="phoneNumber"
+              name="phoneNumber"
+              placeholder="+628..."
+              inputMode="tel"
+              required={formData.category === "Mahasiswa" || formData.category === "Guru/Dosen"}
+              value={formData.phoneNumber}
+              onChange={handleInputChange}
+            />
+          </div>
+
+          {/* ── Category Dropdown ── */}
           <div className="form-group">
             <label htmlFor="category">Kategori</label>
             <select
@@ -304,7 +457,7 @@ export default function RegistrationPage() {
             </select>
           </div>
 
-          {/* Conditional Logic Fields */}
+          {/* ── Santri-specific Fields ── */}
           {formData.category === "Santri" && (
             <div className="conditional-section animate-fade-in">
               <div className="form-group">
@@ -318,9 +471,7 @@ export default function RegistrationPage() {
                 >
                   <option value="">Pilih Sekolah</option>
                   {FORMAL_SCHOOLS.map((school) => (
-                    <option key={school} value={school}>
-                      {school}
-                    </option>
+                    <option key={school} value={school}>{school}</option>
                   ))}
                 </select>
               </div>
@@ -335,30 +486,16 @@ export default function RegistrationPage() {
                 >
                   <option value="">Pilih Asrama</option>
                   {ASRAMA_LIST.map((asrama) => (
-                    <option key={asrama} value={asrama}>
-                      {asrama}
-                    </option>
+                    <option key={asrama} value={asrama}>{asrama}</option>
                   ))}
                 </select>
               </div>
             </div>
           )}
 
+          {/* ── Mahasiswa-specific Fields ── */}
           {formData.category === "Mahasiswa" && (
             <div className="conditional-section animate-fade-in">
-              <div className="form-group">
-                <label htmlFor="phoneNumber">Nomor Telepon</label>
-                <input
-                  type="text"
-                  id="phoneNumber"
-                  name="phoneNumber"
-                  placeholder="+628..."
-                  inputMode="tel"
-                  required
-                  value={formData.phoneNumber}
-                  onChange={handleInputChange}
-                />
-              </div>
               <div className="form-group">
                 <label htmlFor="faculty">Fakultas</label>
                 <select
@@ -370,9 +507,7 @@ export default function RegistrationPage() {
                 >
                   <option value="">Pilih Fakultas</option>
                   {Object.keys(FACULTY_MAJOR_MAP).map((f) => (
-                    <option key={f} value={f}>
-                      {f}
-                    </option>
+                    <option key={f} value={f}>{f}</option>
                   ))}
                 </select>
               </div>
@@ -389,9 +524,7 @@ export default function RegistrationPage() {
                   <option value="">Pilih Program Studi</option>
                   {formData.faculty &&
                     FACULTY_MAJOR_MAP[formData.faculty]?.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
+                      <option key={m} value={m}>{m}</option>
                     ))}
                 </select>
               </div>
@@ -413,21 +546,9 @@ export default function RegistrationPage() {
             </div>
           )}
 
+          {/* ── Guru/Dosen-specific Fields ── */}
           {formData.category === "Guru/Dosen" && (
             <div className="conditional-section animate-fade-in">
-              <div className="form-group">
-                <label htmlFor="phoneNumber">Nomor Telepon</label>
-                <input
-                  type="text"
-                  id="phoneNumber"
-                  name="phoneNumber"
-                  placeholder="+628..."
-                  inputMode="tel"
-                  required
-                  value={formData.phoneNumber}
-                  onChange={handleInputChange}
-                />
-              </div>
               <div className="form-group">
                 <label htmlFor="institution">Instansi</label>
                 <select
@@ -456,9 +577,7 @@ export default function RegistrationPage() {
                   <option value="">Pilih Lokasi Kerja</option>
                   {formData.institution === "Unit Sekolah Formal" ? (
                     FORMAL_SCHOOLS.map((school) => (
-                      <option key={school} value={school}>
-                        {school}
-                      </option>
+                      <option key={school} value={school}>{school}</option>
                     ))
                   ) : (
                     <>

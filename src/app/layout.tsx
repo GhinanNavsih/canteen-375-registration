@@ -11,6 +11,7 @@ export const metadata: Metadata = {
 };
 
 import { MemberProvider } from "@/context/MemberContext";
+import { BasketProvider } from "@/context/BasketContext";
 import StyledJsxRegistry from "./registry";
 
 export default function RootLayout({
@@ -26,7 +27,9 @@ export default function RootLayout({
       <body>
         <StyledJsxRegistry>
           <MemberProvider>
-            {children}
+            <BasketProvider>
+              {children}
+            </BasketProvider>
           </MemberProvider>
         </StyledJsxRegistry>
       </body>

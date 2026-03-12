@@ -25,6 +25,11 @@ export default function Navbar() {
             Dashboard
           </Link>
           {member && (
+            <Link href="/order" className={`nav-link ${isActive("/order") ? "active" : ""}`}>
+              🛒 Order
+            </Link>
+          )}
+          {member && (
             <Link href="/leaderboard" className={`nav-link ${isActive("/leaderboard") ? "active" : ""}`}>
               Leaderboard
             </Link>

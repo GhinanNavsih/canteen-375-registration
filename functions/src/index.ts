@@ -1,6 +1,7 @@
 import * as admin from "firebase-admin";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
+import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { logger } from "firebase-functions/v2";
 
 admin.initializeApp();
@@ -8,6 +9,35 @@ const db = admin.firestore();
 
 const VOUCHER_COLLECTION = "vouchers";
 const VOUCHER_VALUE = 10000;
+
+// ── FUNCTION 0: Set Admin Role via Custom Claim ──────────────────────────────
+// Call this ONCE with your own UID (from the Firebase console or a tool) to
+// bootstrap admin access. After calling, the user must sign out and back in
+// for the new token (with the claim) to be issued.
+//
+// Usage (from a trusted environment, e.g. Firebase console / curl):
+//   firebase functions:call setAdminRole --data '{"uid":"YOUR_UID"}'
+export const setAdminRole = onCall(
+    { region: "us-central1" },
+    async (request) => {
+        // Only existing admins can promote others.
+        if (request.auth?.token?.admin !== true) {
+            throw new HttpsError("permission-denied", "Only admins can set roles.");
+        }
+        const { uid } = request.data as { uid: string };
+        if (!uid) throw new HttpsError("invalid-argument", "uid is required.");
+        await admin.auth().setCustomUserClaims(uid, { admin: true });
+        logger.info(`[setAdminRole] Granted admin role to uid: ${uid}`);
+        return { success: true };
+    }
+);
+
+// NOTE: To bootstrap the FIRST admin (chicken-and-egg), run this snippet once
+// in the Firebase Admin SDK locally or via a one-time script:
+//   const admin = require('firebase-admin');
+//   admin.initializeApp();
+//   admin.auth().setCustomUserClaims('YOUR_UID', { admin: true });
+
 
 // SHARED HELPER - Birthday Voucher logic
 async function issueBirthdayVoucherIfEligible(
