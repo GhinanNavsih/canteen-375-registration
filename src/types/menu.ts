@@ -5,6 +5,7 @@ export interface MenuItem {
   category: string;
   imagePath: string;
   isMakanan: boolean;
+  isRecommended?: boolean;
   menuDescription?: string;
 }
 

@@ -26,8 +26,8 @@ export default function OrderPage() {
       try {
         const snap = await getDocs(collection(db, "Canteens", "canteen375", "MenuCollection"));
         const items: MenuItem[] = snap.docs.map((doc) => ({
-          id: doc.id,
           ...doc.data(),
+          id: doc.id,
         } as MenuItem));
         setMenuItems(items);
       } catch (err) {
@@ -44,11 +44,18 @@ export default function OrderPage() {
     if (!sessionLoading && !member) router.push("/login");
   }, [member, sessionLoading, router]);
 
-  // Recommended: 6 items — prioritise food items
+  // Recommended logic:
+  // 1. Prioritise items where isRecommended is true
+  // 2. Fallback to prioritising food items
   const recommended = useMemo(() => {
-    const food = menuItems.filter((i) => i.isMakanan);
-    const drink = menuItems.filter((i) => !i.isMakanan);
-    return [...food, ...drink].slice(0, 6);
+    const manualRecommended = menuItems.filter((i) => i.isRecommended);
+    const others = menuItems.filter((i) => !i.isRecommended);
+
+    // Sort others by food first
+    const food = others.filter((i) => i.isMakanan);
+    const drink = others.filter((i) => !i.isMakanan);
+
+    return [...manualRecommended, ...food, ...drink].slice(0, 6);
   }, [menuItems]);
 
   // Group remaining items by category
@@ -122,7 +129,7 @@ export default function OrderPage() {
             <div className="recommended-grid">
               {recommended.map((item) => (
                 <MenuCard
-                  key={item.id}
+                  key={`rec-${item.id}`}
                   item={item}
                   onAdd={() => handleAdd(item)}
                   added={addedItems.has(item.id)}
@@ -140,7 +147,7 @@ export default function OrderPage() {
             const hasMore = items.length > 3;
 
             return (
-              <section key={category} className="menu-section">
+              <section key={`cat-${category}`} className="menu-section">
                 <div className="section-title-row">
                   <h2 className="section-title">
                     {category}
@@ -158,7 +165,7 @@ export default function OrderPage() {
                 <div className="category-list">
                   {displayed.map((item) => (
                     <MenuListItem
-                      key={item.id}
+                      key={`list-${item.id}`}
                       item={item}
                       onAdd={() => handleAdd(item)}
                       added={addedItems.has(item.id)}

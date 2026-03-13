@@ -115,7 +115,7 @@ export default function BasketPage() {
         {/* ── Order items list ── */}
         <div className="items-list">
           {basket.map(({ menuItem, dineInQuantity, takeAwayQuantity }) => (
-            <div key={menuItem.id} className="basket-item">
+            <div key={`basket-${menuItem.id}`} className="basket-item">
               <img
                 src={menuItem.imagePath || "/placeholder-food.png"}
                 alt={menuItem.namaMenu}
@@ -138,7 +138,7 @@ export default function BasketPage() {
 
                 {/* Take-away row */}
                 <div className="qty-row">
-                  <span className="qty-label">📦 Bungkus</span>
+                  <span className="qty-label">🥡 Bungkus</span>
                   <div className="qty-controls">
                     <button className="qty-btn" onClick={() => updateQuantity(menuItem.id, "takeAway", -1)}>−</button>
                     <span className="qty-value">{takeAwayQuantity}</span>

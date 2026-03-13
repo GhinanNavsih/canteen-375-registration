@@ -90,5 +90,21 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isAdmin();
     }
+
+    // ── Canteens / MenuCollection ─────────────────────────────────────────────
+    // Admin has full CRUD. All authenticated users (members) can read for ordering.
+    match /Canteens/{canteenId}/MenuCollection/{menuId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ── SelfOrders collection ─────────────────────────────────────────────────
+    match /SelfOrders/{orderId} {
+      // Members can create their own orders and read their own.
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      // Only admins/POS can update status (Unpaid → Paid).
+      allow update, delete: if isAdmin();
+    }
   }
 }

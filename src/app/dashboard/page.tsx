@@ -12,7 +12,7 @@ import { Member } from "@/types/member";
 import { VoucherGroup, Voucher } from "@/types/voucher";
 
 export default function DashboardPage() {
-  const { member, loading: sessionLoading, logoutMember } = useMember();
+  const { member, loading: sessionLoading, logoutMember, isAdmin } = useMember();
   const [liveMember, setLiveMember] = useState<Member | null>(null);
   const [voucherGroups, setVoucherGroups] = useState<VoucherGroup[]>([]);
   const [userVouchers, setUserVouchers] = useState<Voucher[]>([]);
@@ -28,6 +28,13 @@ export default function DashboardPage() {
 
   const currentMonth = new Date().toISOString().slice(0, 7);
 
+  // Redirect admins to their own panel
+  useEffect(() => {
+    if (!sessionLoading && isAdmin) {
+      router.push("/admin/menu");
+    }
+  }, [isAdmin, sessionLoading, router]);
+
   useEffect(() => {
     if (!sessionLoading && !member) {
       router.push("/leaderboard");
@@ -42,7 +49,7 @@ export default function DashboardPage() {
         const membersMap: Record<string, Member> = {};
         snap.forEach(doc => {
           const tid = doc.id.trim();
-          membersMap[tid] = { id: tid, ...doc.data() } as Member;
+          membersMap[tid] = { ...doc.data(), id: tid } as Member;
         });
         setAllMembers(membersMap);
       };
