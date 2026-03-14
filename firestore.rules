@@ -98,6 +98,20 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
+    // ── Canteens / Metadata ───────────────────────────────────────────────────
+    // Admin can manage config (like category order). Members can read it.
+    match /Canteens/{canteenId}/Metadata/{configId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // ── Canteens / OptionGroups ───────────────────────────────────────────────
+    // Admin has full CRUD. Members can read for ordering.
+    match /Canteens/{canteenId}/OptionGroups/{groupId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin();
+    }
+
     // ── SelfOrders collection ─────────────────────────────────────────────────
     match /SelfOrders/{orderId} {
       // Members can create their own orders and read their own.

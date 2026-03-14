@@ -7,6 +7,22 @@ export interface MenuItem {
   isMakanan: boolean;
   isRecommended?: boolean;
   menuDescription?: string;
+  order?: number;
+}
+
+export interface OptionItem {
+  name: string;
+  additionalPrice: number;
+}
+
+export interface OptionGroup {
+  id: string;
+  name: string;
+  options: OptionItem[];
+  selectionRule: 'required' | 'optional';
+  ruleType: 'exactly' | 'at_least' | 'at_most'; // only relevant when required
+  ruleCount: number;                              // how many the customer must pick
+  linkedItemIds: string[];                        // IDs of MenuItems this group applies to
 }
 
 export interface BasketItem {
