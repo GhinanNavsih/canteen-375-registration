@@ -23,6 +23,7 @@ const emptyForm = (nextOrder: number, defaultCategory: string): Omit<MenuItem, "
   isRecommended: false,
   menuDescription: "",
   order: nextOrder,
+  unitsPerPackage: 1,
 });
 
 export default function AdminMenuPage() {
@@ -86,18 +87,18 @@ export default function AdminMenuPage() {
         return {
           ...data,
           id: d.id,
-          category: (data.category && typeof data.category === 'string' && data.category.trim() !== '') 
-            ? data.category 
+          category: (data.category && typeof data.category === 'string' && data.category.trim() !== '')
+            ? data.category
             : "Lainnya"
         } as MenuItem;
       });
-      
+
       const configSnap = await getDoc(doc(db, ...CONFIG_DOC_PATH as [string, string, string, string]));
       let sortedCategories: string[] = [];
-      
+
       const distinctCats = Array.from(new Set(items.map(i => i.category)))
         .filter((c): c is string => typeof c === 'string' && c.trim() !== '');
-      
+
       if (configSnap.exists()) {
         const storedOrder = configSnap.data().categoryOrder || [];
         sortedCategories = storedOrder.filter((c: string) => distinctCats.includes(c));
@@ -111,7 +112,7 @@ export default function AdminMenuPage() {
         const diff = (a.order ?? 0) - (b.order ?? 0);
         return diff !== 0 ? diff : a.namaMenu.localeCompare(b.namaMenu);
       }));
-      
+
       // Auto-add "Lainnya" if items exist but it's not in the list
       const hasLainnya = items.some(i => i.category === "Lainnya");
       if (hasLainnya && !sortedCategories.includes("Lainnya")) {
@@ -157,6 +158,7 @@ export default function AdminMenuPage() {
       isRecommended: item.isRecommended ?? false,
       menuDescription: item.menuDescription ?? "",
       order: item.order ?? 0,
+      unitsPerPackage: item.unitsPerPackage ?? 1,
     });
     setModalOpen(true);
   };
@@ -172,8 +174,21 @@ export default function AdminMenuPage() {
         await updateDoc(doc(db, ...MENU_COLLECTION_PATH as [string, string, string], editingItem.id), form);
         showToast(`"${form.namaMenu}" diperbarui ✓`, "success");
       } else {
-        await addDoc(collection(db, ...MENU_COLLECTION_PATH as [string, string, string]), form);
+        // Use menu name as documentId for better identification
+        const docId = form.namaMenu.trim();
+        const docRef = doc(db, ...MENU_COLLECTION_PATH as [string, string, string], docId);
+
+        // Check for duplicates
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          showToast(`Menu "${docId}" sudah ada! Silakan gunakan nama lain.`, "error");
+          setSaving(false);
+          return;
+        }
+
+        await setDoc(docRef, form);
         showToast(`"${form.namaMenu}" ditambahkan ✓`, "success");
+
         // Ensure new category is added to order if it's new
         if (!categoryOrder.includes(form.category)) {
           const newOrder = [...categoryOrder, form.category];
@@ -221,7 +236,7 @@ export default function AdminMenuPage() {
 
   const moveTemp = (index: number, direction: 'up' | 'down') => {
     const swapIndex = direction === 'up' ? index - 1 : index + 1;
-    
+
     if (rearrangeMode === 'categories') {
       const newOrder = [...tempCategoryOrder];
       if (swapIndex < 0 || swapIndex >= newOrder.length) return;
@@ -327,198 +342,201 @@ export default function AdminMenuPage() {
 
       {activeTab === 'menu' && <>
 
-      {/* Drawer Overlay */}
-      <div className={`drawer-overlay ${drawerOpen ? 'open' : ''}`} onClick={() => setDrawerOpen(false)} />
-      
-      {/* Universal Rearrange Drawer */}
-      <div className={`drawer ${drawerOpen ? 'open' : ''}`}>
-        <div className="drawer-header">
-          <h2>{rearrangeMode === 'categories' ? 'Atur Urutan Kategori' : `Atur Urutan: ${activeCategory}`}</h2>
-          <button className="close-drawer" onClick={() => setDrawerOpen(false)}>✕</button>
-        </div>
-        <div className="drawer-body">
-          <p className="drawer-desc">
-            {rearrangeMode === 'categories' 
-              ? 'Geser naik atau turun untuk mengubah urutan kategori yang akan ditampilkan ke pelanggan.'
-              : 'Atur urutan item dalam kategori ini agar mempermudah pelanggan dalam memilih.'}
-          </p>
-          <div className="drawer-list">
-            {rearrangeMode === 'categories' ? (
-              tempCategoryOrder.map((cat, idx) => (
-                <div key={cat} className="drawer-item">
-                  <div className="drawer-item-title">
-                    <span className="drag-icon">☰</span>
-                    {cat}
-                  </div>
-                  <div className="drawer-item-actions">
-                    <button onClick={() => moveTemp(idx, 'up')} disabled={idx === 0}>▲</button>
-                    <button onClick={() => moveTemp(idx, 'down')} disabled={idx === tempCategoryOrder.length - 1}>▼</button>
-                  </div>
-                </div>
-              ))
-            ) : (
-              tempItemsOrder.map((item, idx) => (
-                <div key={item.id} className="drawer-item">
-                  <div className="drawer-item-title">
-                    <span className="drag-icon">☰</span>
-                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                      <span style={{ fontWeight: 600 }}>{item.namaMenu}</span>
-                      <span style={{ fontSize: '0.75rem', color: '#888' }}>{formatPrice(item.harga)}</span>
+        {/* Drawer Overlay */}
+        <div className={`drawer-overlay ${drawerOpen ? 'open' : ''}`} onClick={() => setDrawerOpen(false)} />
+
+        {/* Universal Rearrange Drawer */}
+        <div className={`drawer ${drawerOpen ? 'open' : ''}`}>
+          <div className="drawer-header">
+            <h2>{rearrangeMode === 'categories' ? 'Atur Urutan Kategori' : `Atur Urutan: ${activeCategory}`}</h2>
+            <button className="close-drawer" onClick={() => setDrawerOpen(false)}>✕</button>
+          </div>
+          <div className="drawer-body">
+            <p className="drawer-desc">
+              {rearrangeMode === 'categories'
+                ? 'Geser naik atau turun untuk mengubah urutan kategori yang akan ditampilkan ke pelanggan.'
+                : 'Atur urutan item dalam kategori ini agar mempermudah pelanggan dalam memilih.'}
+            </p>
+            <div className="drawer-list">
+              {rearrangeMode === 'categories' ? (
+                tempCategoryOrder.map((cat, idx) => (
+                  <div key={cat} className="drawer-item">
+                    <div className="drawer-item-title">
+                      <span className="drag-icon">☰</span>
+                      {cat}
+                    </div>
+                    <div className="drawer-item-actions">
+                      <button onClick={() => moveTemp(idx, 'up')} disabled={idx === 0}>▲</button>
+                      <button onClick={() => moveTemp(idx, 'down')} disabled={idx === tempCategoryOrder.length - 1}>▼</button>
                     </div>
                   </div>
-                  <div className="drawer-item-actions">
-                    <button onClick={() => moveTemp(idx, 'up')} disabled={idx === 0}>▲</button>
-                    <button onClick={() => moveTemp(idx, 'down')} disabled={idx === tempItemsOrder.length - 1}>▼</button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-        <div className="drawer-footer">
-          <button className="btn-cancel" onClick={() => setDrawerOpen(false)}>Batal</button>
-          <button 
-            className="btn-save" 
-            onClick={handleSaveRearrange} 
-            disabled={!hasOrderChanged || saving}
-          >
-            {saving ? 'Menyimpan...' : 'Simpan Perubahan'}
-          </button>
-        </div>
-      </div>
-
-      {/* Modals */}
-      {deleteConfirm && (
-        <div className="modal-overlay" onClick={() => setDeleteConfirm(null)}>
-          <div className="confirm-card" onClick={e => e.stopPropagation()}>
-            <div className="confirm-icon">🗑️</div>
-            <h3>Hapus Item?</h3>
-            <p>Yakin ingin menghapus <strong>{deleteConfirm.namaMenu}</strong>?</p>
-            <div className="confirm-actions">
-              <button className="btn-cancel" onClick={() => setDeleteConfirm(null)}>Batal</button>
-              <button className="btn-delete" onClick={() => handleDelete(deleteConfirm)}>Hapus</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {modalOpen && (
-        <div className="modal-overlay" onClick={() => setModalOpen(false)}>
-          <div className="modal-card" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>{editingItem ? "Edit Menu" : "Tambah Item Baru"}</h2>
-              <button className="close-btn" onClick={() => setModalOpen(false)}>✕</button>
-            </div>
-            <div className="modal-body">
-              <div className="field"><label>Nama Menu *</label><input value={form.namaMenu} onChange={e => setForm(f => ({ ...f, namaMenu: e.target.value }))} /></div>
-              <div className="field-row">
-                <div className="field"><label>Harga *</label><input type="number" value={form.harga} onChange={e => setForm(f => ({ ...f, harga: Number(e.target.value) }))} /></div>
-                <div className="field">
-                  <label>Kategori *</label>
-                  <input value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} list="cat-suggestions" />
-                  <datalist id="cat-suggestions">
-                    {categoryOrder.map(c => <option key={c} value={c} />)}
-                  </datalist>
-                </div>
-              </div>
-              <div className="field"><label>URL Gambar</label><input value={form.imagePath} onChange={e => setForm(f => ({ ...f, imagePath: e.target.value }))} /></div>
-              <div className="field"><label>Deskripsi</label><textarea value={form.menuDescription} onChange={e => setForm(f => ({ ...f, menuDescription: e.target.value }))} rows={2} /></div>
-              <div className="toggle-row">
-                <div className="toggle-pill">
-                  <button className={`pill-opt ${form.isMakanan ? "active" : ""}`} onClick={() => setForm(f => ({ ...f, isMakanan: true }))}>🍽️ Makanan</button>
-                  <button className={`pill-opt ${!form.isMakanan ? "active" : ""}`} onClick={() => setForm(f => ({ ...f, isMakanan: false }))}>🥤 Minuman</button>
-                </div>
-                <button className={`star-btn ${form.isRecommended ? "starred" : ""}`} onClick={() => setForm(f => ({ ...f, isRecommended: !f.isRecommended }))}>
-                  {form.isRecommended ? "⭐ Rekomendasi" : "☆ Biasa"}
-                </button>
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button className="btn-cancel" onClick={() => setModalOpen(false)}>Batal</button>
-              <button className="btn-save" onClick={handleSave} disabled={saving}>{saving ? "Wait..." : "Simpan"}</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Main Content Area */}
-      <div className="admin-content-wrap">
-        <div className="search-bar-wrap">
-          <input className="search-input" placeholder="🔍 Cari nama menu..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
-        </div>
-
-        <div className="grab-layout">
-          {/* LEFT: Categories */}
-          <div className="grab-sidebar">
-            <div className="grab-header">
-              <span className="grab-header-title">CATEGORIES</span>
-              <div className="kebab-wrap" ref={catMenuRef}>
-                <button className="kebab-btn" onClick={() => setCatMenuOpen(!catMenuOpen)}>⋮</button>
-                {catMenuOpen && (
-                  <div className="dropdown-menu">
-                    <button onClick={() => openRearrangeDrawer('categories')}>Rearrange Categories</button>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="categories-list">
-              {Array.from(new Set(categoryOrder)).map(cat => {
-                const count = (groupedItems.get(cat) || []).length;
-                return (
-                  <div 
-                    key={`cat-${cat}`} 
-                    className={`cat-item ${activeCategory === cat ? 'active' : ''}`}
-                    onClick={() => setActiveCategory(cat)}
-                  >
-                    <span className="cat-name">{cat}</span>
-                    <span className="cat-count">{count}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* RIGHT: Items */}
-          <div className="grab-main">
-            <div className="grab-header">
-              <span className="grab-header-title">ITEMS</span>
-              <div className="kebab-wrap" ref={itemsMenuRef}>
-                <button className="kebab-btn" onClick={() => setItemsMenuOpen(!itemsMenuOpen)}>⋮</button>
-                {itemsMenuOpen && (
-                  <div className="dropdown-menu right">
-                    <button onClick={openCreate}>Add New Item</button>
-                    <button onClick={() => openRearrangeDrawer('items')}>Rearrange Items</button>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="items-list">
-              {activeItems.length === 0 ? (
-                <div className="empty-items">Belum ada item di kategori ini.</div>
+                ))
               ) : (
-                activeItems.map((item, idx) => (
-                  <div key={item.id} className="menu-item-row">
-                    <div className="item-details">
-                      <img src={item.imagePath || "/placeholder-food.png"} alt={item.namaMenu} className="item-img" onError={e => e.currentTarget.src="/Logo Canteen 375 (2).png"} />
-                      <div className="item-text">
-                        <span className="item-title">{item.namaMenu} {item.isRecommended && "⭐"}</span>
-                        <span className="item-price">{formatPrice(item.harga)}</span>
-                        {item.menuDescription && <span className="item-desc">{item.menuDescription}</span>}
+                tempItemsOrder.map((item, idx) => (
+                  <div key={item.id} className="drawer-item">
+                    <div className="drawer-item-title">
+                      <span className="drag-icon">☰</span>
+                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <span style={{ fontWeight: 600 }}>{item.namaMenu}</span>
+                        <span style={{ fontSize: '0.75rem', color: '#888' }}>{formatPrice(item.harga)}</span>
                       </div>
                     </div>
-                    <div className="item-actions">
-                       <button className="act-edit" onClick={() => openEdit(item)}>Edit</button>
-                       <button className="act-del" onClick={() => setDeleteConfirm(item)}>✕</button>
+                    <div className="drawer-item-actions">
+                      <button onClick={() => moveTemp(idx, 'up')} disabled={idx === 0}>▲</button>
+                      <button onClick={() => moveTemp(idx, 'down')} disabled={idx === tempItemsOrder.length - 1}>▼</button>
                     </div>
                   </div>
                 ))
               )}
             </div>
           </div>
+          <div className="drawer-footer">
+            <button className="btn-cancel" onClick={() => setDrawerOpen(false)}>Batal</button>
+            <button
+              className="btn-save"
+              onClick={handleSaveRearrange}
+              disabled={!hasOrderChanged || saving}
+            >
+              {saving ? 'Menyimpan...' : 'Simpan Perubahan'}
+            </button>
+          </div>
         </div>
-      </div>
 
-      </> }
+        {/* Modals */}
+        {deleteConfirm && (
+          <div className="modal-overlay" onClick={() => setDeleteConfirm(null)}>
+            <div className="confirm-card" onClick={e => e.stopPropagation()}>
+              <div className="confirm-icon">🗑️</div>
+              <h3>Hapus Item?</h3>
+              <p>Yakin ingin menghapus <strong>{deleteConfirm.namaMenu}</strong>?</p>
+              <div className="confirm-actions">
+                <button className="btn-cancel" onClick={() => setDeleteConfirm(null)}>Batal</button>
+                <button className="btn-delete" onClick={() => handleDelete(deleteConfirm)}>Hapus</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {modalOpen && (
+          <div className="modal-overlay" onClick={() => setModalOpen(false)}>
+            <div className="modal-card" onClick={e => e.stopPropagation()}>
+              <div className="modal-header">
+                <h2>{editingItem ? "Edit Menu" : "Tambah Item Baru"}</h2>
+                <button className="close-btn" onClick={() => setModalOpen(false)}>✕</button>
+              </div>
+              <div className="modal-body">
+                <div className="field"><label>Nama Menu *</label><input value={form.namaMenu} onChange={e => setForm(f => ({ ...f, namaMenu: e.target.value }))} /></div>
+                <div className="field-row">
+                  <div className="field"><label>Harga *</label><input type="number" value={form.harga} onChange={e => setForm(f => ({ ...f, harga: Number(e.target.value) }))} /></div>
+                  <div className="field">
+                    <label>Kategori *</label>
+                    <input value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} list="cat-suggestions" />
+                    <datalist id="cat-suggestions">
+                      {categoryOrder.map(c => <option key={c} value={c} />)}
+                    </datalist>
+                  </div>
+                </div>
+                <div className="field-row">
+                  <div className="field"><label>URL Gambar</label><input value={form.imagePath} onChange={e => setForm(f => ({ ...f, imagePath: e.target.value }))} /></div>
+                  <div className="field"><label>Isi/Pack (Take-away)</label><input type="number" min="1" value={form.unitsPerPackage} onChange={e => setForm(f => ({ ...f, unitsPerPackage: Math.max(1, Number(e.target.value)) }))} /></div>
+                </div>
+                <div className="field"><label>Deskripsi</label><textarea value={form.menuDescription} onChange={e => setForm(f => ({ ...f, menuDescription: e.target.value }))} rows={2} /></div>
+                <div className="toggle-row">
+                  <div className="toggle-pill">
+                    <button className={`pill-opt ${form.isMakanan ? "active" : ""}`} onClick={() => setForm(f => ({ ...f, isMakanan: true }))}>🍽️ Makanan</button>
+                    <button className={`pill-opt ${!form.isMakanan ? "active" : ""}`} onClick={() => setForm(f => ({ ...f, isMakanan: false }))}>🥤 Minuman</button>
+                  </div>
+                  <button className={`star-btn ${form.isRecommended ? "starred" : ""}`} onClick={() => setForm(f => ({ ...f, isRecommended: !f.isRecommended }))}>
+                    {form.isRecommended ? "⭐ Rekomendasi" : "☆ Biasa"}
+                  </button>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button className="btn-cancel" onClick={() => setModalOpen(false)}>Batal</button>
+                <button className="btn-save" onClick={handleSave} disabled={saving}>{saving ? "Wait..." : "Simpan"}</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Main Content Area */}
+        <div className="admin-content-wrap">
+          <div className="search-bar-wrap">
+            <input className="search-input" placeholder="🔍 Cari nama menu..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+          </div>
+
+          <div className="grab-layout">
+            {/* LEFT: Categories */}
+            <div className="grab-sidebar">
+              <div className="grab-header">
+                <span className="grab-header-title">CATEGORIES</span>
+                <div className="kebab-wrap" ref={catMenuRef}>
+                  <button className="kebab-btn" onClick={() => setCatMenuOpen(!catMenuOpen)}>⋮</button>
+                  {catMenuOpen && (
+                    <div className="dropdown-menu">
+                      <button onClick={() => openRearrangeDrawer('categories')}>Rearrange Categories</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="categories-list">
+                {Array.from(new Set(categoryOrder)).map(cat => {
+                  const count = (groupedItems.get(cat) || []).length;
+                  return (
+                    <div
+                      key={`cat-${cat}`}
+                      className={`cat-item ${activeCategory === cat ? 'active' : ''}`}
+                      onClick={() => setActiveCategory(cat)}
+                    >
+                      <span className="cat-name">{cat}</span>
+                      <span className="cat-count">{count}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* RIGHT: Items */}
+            <div className="grab-main">
+              <div className="grab-header">
+                <span className="grab-header-title">ITEMS</span>
+                <div className="kebab-wrap" ref={itemsMenuRef}>
+                  <button className="kebab-btn" onClick={() => setItemsMenuOpen(!itemsMenuOpen)}>⋮</button>
+                  {itemsMenuOpen && (
+                    <div className="dropdown-menu right">
+                      <button onClick={openCreate}>Add New Item</button>
+                      <button onClick={() => openRearrangeDrawer('items')}>Rearrange Items</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="items-list">
+                {activeItems.length === 0 ? (
+                  <div className="empty-items">Belum ada item di kategori ini.</div>
+                ) : (
+                  activeItems.map((item, idx) => (
+                    <div key={item.id} className="menu-item-row">
+                      <div className="item-details">
+                        <img src={item.imagePath || "/Logo Canteen 375 (2).png"} alt={item.namaMenu} className="item-image" onError={e => e.currentTarget.src = "/Logo Canteen 375 (2).png"} />
+                        <div className="item-text">
+                          <span className="item-title">{item.namaMenu} {item.isRecommended && "⭐"}</span>
+                          <span className="item-price">{formatPrice(item.harga)}</span>
+                          {item.menuDescription && <span className="item-desc">{item.menuDescription}</span>}
+                        </div>
+                      </div>
+                      <div className="item-actions">
+                        <button className="act-edit" onClick={() => openEdit(item)}>Edit</button>
+                        <button className="act-del" onClick={() => setDeleteConfirm(item)}>✕</button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </>}
 
       <AdminStyles />
     </div>
@@ -602,7 +620,7 @@ function AdminStyles() {
       .menu-item-row:hover { background: #fafafa; }
       
       .item-details { display: flex; gap: 1.2rem; flex: 1; }
-      .item-img { width: 72px; height: 72px; border-radius: 8px; object-fit: cover; background: #eee; border: 1px solid #eaeaea; }
+      .item-image { width: 80px; height: 80px; border-radius: 8px; object-fit: cover; background: #eee; border: 1px solid #eaeaea; }
       .item-text { display: flex; flex-direction: column; gap: 0.3rem; }
       .item-title { font-weight: 600; font-size: 0.95rem; color: #333; }
       .item-price { font-size: 0.9rem; color: #666; }

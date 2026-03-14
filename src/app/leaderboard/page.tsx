@@ -158,11 +158,19 @@ export default function LeaderboardPage() {
         .leaderboard-wrapper {
           min-height: 100vh;
           background: #C51720;
+          position: relative;
         }
         .leaderboard-main {
           padding: 2rem 1rem;
           display: flex;
           justify-content: center;
+          /* The "Effect": Semi-transparent peach over red + massive blur */
+          background: rgba(250, 247, 242, 0.66);
+          backdrop-filter: blur(300px);
+          -webkit-backdrop-filter: blur(300px);
+          background-image: 
+            radial-gradient(circle at 20% 20%, rgba(240, 231, 170, 0.5), transparent 66%),
+            radial-gradient(circle at 70% 80%, rgba(255, 248, 180, 0.5), transparent 66%);
         }
         .leaderboard-container {
           width: 100%;

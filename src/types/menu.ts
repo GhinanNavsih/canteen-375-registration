@@ -8,6 +8,7 @@ export interface MenuItem {
   isRecommended?: boolean;
   menuDescription?: string;
   order?: number;
+  unitsPerPackage?: number;
 }
 
 export interface OptionItem {
@@ -25,10 +26,18 @@ export interface OptionGroup {
   linkedItemIds: string[];                        // IDs of MenuItems this group applies to
 }
 
+export interface SelectedOption {
+  groupName: string;
+  optionName: string;
+  additionalPrice: number;
+}
+
 export interface BasketItem {
+  cartItemId: string; // Unique ID to distinguish same menu item with different options
   menuItem: MenuItem;
   dineInQuantity: number;
   takeAwayQuantity: number;
+  selectedOptions: SelectedOption[];
 }
 
 export interface SelfOrder {
@@ -37,8 +46,9 @@ export interface SelfOrder {
     namaPesanan: string;
     dineInQuantity: number;
     takeAwayQuantity: number;
-    harga: number;
+    harga: number; // base price + options price
     viaAssociationRules: boolean;
+    selectedOptions?: SelectedOption[];
   }[];
   total: number;
   status: "Unpaid" | "Paid" | "Cancelled";

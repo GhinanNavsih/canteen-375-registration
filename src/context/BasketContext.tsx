@@ -1,15 +1,15 @@
 "use client";
 
 import React, { createContext, useContext, useState, useCallback } from "react";
-import { MenuItem, BasketItem } from "@/types/menu";
+import { MenuItem, BasketItem, SelectedOption } from "@/types/menu";
 
 interface BasketContextType {
   basket: BasketItem[];
   totalItems: number;
   totalPrice: number;
-  addToBasket: (item: MenuItem) => void;
-  removeFromBasket: (itemId: string) => void;
-  updateQuantity: (itemId: string, type: "dineIn" | "takeAway", delta: number) => void;
+  addToBasket: (item: MenuItem, selectedOptions?: SelectedOption[]) => void;
+  removeFromBasket: (cartItemId: string) => void;
+  updateQuantity: (cartItemId: string, type: "dineIn" | "takeAway", delta: number) => void;
   clearBasket: () => void;
 }
 
@@ -18,31 +18,44 @@ const BasketContext = createContext<BasketContextType | undefined>(undefined);
 export function BasketProvider({ children }: { children: React.ReactNode }) {
   const [basket, setBasket] = useState<BasketItem[]>([]);
 
-  const addToBasket = useCallback((item: MenuItem) => {
+  const addToBasket = useCallback((item: MenuItem, selectedOptions: SelectedOption[] = []) => {
+    // Generate a unique ID based on the menu item and its selected options
+    const optString = [...selectedOptions]
+      .sort((a, b) => a.optionName.localeCompare(b.optionName))
+      .map(o => `${o.groupName}:${o.optionName}`)
+      .join('|');
+    const cartItemId = `${item.id}-${optString}`;
+
     setBasket((prev) => {
-      const existing = prev.find((b) => b.menuItem.id === item.id);
+      const existing = prev.find((b) => b.cartItemId === cartItemId);
       if (existing) {
-        // If already in basket, increment dine-in by default
+        // If exact configuration already in basket, increment dine-in by default
         return prev.map((b) =>
-          b.menuItem.id === item.id
+          b.cartItemId === cartItemId
             ? { ...b, dineInQuantity: b.dineInQuantity + 1 }
             : b
         );
       }
-      return [...prev, { menuItem: item, dineInQuantity: 1, takeAwayQuantity: 0 }];
+      return [...prev, { 
+        cartItemId, 
+        menuItem: item, 
+        dineInQuantity: 1, 
+        takeAwayQuantity: 0, 
+        selectedOptions 
+      }];
     });
   }, []);
 
-  const removeFromBasket = useCallback((itemId: string) => {
-    setBasket((prev) => prev.filter((b) => b.menuItem.id !== itemId));
+  const removeFromBasket = useCallback((cartItemId: string) => {
+    setBasket((prev) => prev.filter((b) => b.cartItemId !== cartItemId));
   }, []);
 
   const updateQuantity = useCallback(
-    (itemId: string, type: "dineIn" | "takeAway", delta: number) => {
+    (cartItemId: string, type: "dineIn" | "takeAway", delta: number) => {
       setBasket((prev) =>
         prev
           .map((b) => {
-            if (b.menuItem.id !== itemId) return b;
+            if (b.cartItemId !== cartItemId) return b;
             const updated =
               type === "dineIn"
                 ? { ...b, dineInQuantity: Math.max(0, b.dineInQuantity + delta) }
@@ -64,7 +77,12 @@ export function BasketProvider({ children }: { children: React.ReactNode }) {
   );
 
   const totalPrice = basket.reduce(
-    (sum, b) => sum + b.menuItem.harga * (b.dineInQuantity + b.takeAwayQuantity),
+    (sum, b) => {
+      const optionsPrice = b.selectedOptions.reduce((oSum, opt) => oSum + opt.additionalPrice, 0);
+      const itemBasePrice = b.menuItem.harga + optionsPrice;
+      const qty = b.dineInQuantity + b.takeAwayQuantity;
+      return sum + (itemBasePrice * qty);
+    },
     0
   );
 
@@ -82,3 +100,4 @@ export function useBasket() {
   if (!context) throw new Error("useBasket must be used within BasketProvider");
   return context;
 }
+

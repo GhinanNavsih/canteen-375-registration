@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { collection, doc, setDoc, serverTimestamp, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useMember } from "@/context/MemberContext";
 import { useBasket } from "@/context/BasketContext";
 import Navbar from "@/components/Navbar";
+import { MenuItem } from "@/types/menu";
 
 export default function BasketPage() {
   const { member } = useMember();
@@ -15,7 +16,39 @@ export default function BasketPage() {
   const [submitting, setSubmitting] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState<{ shortCode: string } | null>(null);
 
+  // Cross-selling state
+  const [crossSellItems, setCrossSellItems] = useState<MenuItem[]>([]);
+  const [addedCrossItems, setAddedCrossItems] = useState<Set<string>>(new Set());
+
+  // Take-away Fee Logic
+  // Every 4 slots occupied = Rp 1.000
+  const totalTakeAwaySlots = basket.reduce((total, b) => {
+    if (b.takeAwayQuantity === 0) return total;
+    const unitsPerPackage = b.menuItem.unitsPerPackage || 1;
+    const slots = Math.ceil(b.takeAwayQuantity / unitsPerPackage);
+    return total + slots;
+  }, 0);
+
+  const takeAwayFee = totalTakeAwaySlots > 0 ? Math.ceil(totalTakeAwaySlots / 4) * 1000 : 0;
+
   const formatPrice = (price: number) => `Rp${price.toLocaleString("id-ID")}`;
+
+  useEffect(() => {
+    // Fetch recommended items for "People also ordered"
+    const fetchCrossSell = async () => {
+      try {
+        const snap = await getDocs(collection(db, "Canteens", "canteen375", "MenuCollection"));
+        const items = snap.docs.map(d => ({ ...d.data(), id: d.id } as MenuItem));
+        // Filter out items already in basket to avoid redundant suggestions
+        const inBasketIds = new Set(basket.map(b => b.menuItem.id));
+        const suggestions = items.filter(i => i.isRecommended && !inBasketIds.has(i.id)).slice(0, 5);
+        setCrossSellItems(suggestions);
+      } catch (err) {
+        console.error("Error fetching cross-sell items", err);
+      }
+    };
+    fetchCrossSell();
+  }, [basket]);
 
   const generateShortCode = () => {
     const num = Math.floor(1000 + Math.random() * 9000);
@@ -30,17 +63,21 @@ export default function BasketPage() {
       const shortCode = generateShortCode();
       const orderItems = basket.map((b) => ({
         namaPesanan: b.menuItem.namaMenu,
-        harga: b.menuItem.harga,
+        harga: b.menuItem.harga + b.selectedOptions.reduce((acc, o) => acc + o.additionalPrice, 0),
         dineInQuantity: b.dineInQuantity,
         takeAwayQuantity: b.takeAwayQuantity,
         viaAssociationRules: false,
+        selectedOptions: b.selectedOptions,
       }));
 
-      await addDoc(collection(db, "SelfOrders"), {
+      const orderId = `SO_${shortCode.replace("#", "")}`;
+      await setDoc(doc(db, "Canteens", "canteen375", "SelfOrders", orderId), {
         userId: member.uid || member.id,
         memberName: member.fullName,
         orderItems,
-        total: totalPrice,
+        subtotal: totalPrice,
+        takeAwayFee,
+        total: totalPrice + takeAwayFee,
         status: "Unpaid",
         shortCode,
         timestamp: serverTimestamp(),
@@ -114,61 +151,139 @@ export default function BasketPage() {
       <div className="basket-content">
         {/* ── Order items list ── */}
         <div className="items-list">
-          {basket.map(({ menuItem, dineInQuantity, takeAwayQuantity }) => (
-            <div key={`basket-${menuItem.id}`} className="basket-item">
-              <img
-                src={menuItem.imagePath || "/placeholder-food.png"}
-                alt={menuItem.namaMenu}
-                className="item-img"
-                onError={(e) => { (e.target as HTMLImageElement).src = "/Logo Canteen 375 (2).png"; }}
-              />
-              <div className="item-details">
-                <p className="item-name">{menuItem.namaMenu}</p>
-                <p className="item-price">{formatPrice(menuItem.harga)}</p>
+          {basket.map(({ cartItemId, menuItem, dineInQuantity, takeAwayQuantity, selectedOptions }) => {
+            const optionsPrice = selectedOptions.reduce((sum, opt) => sum + opt.additionalPrice, 0);
+            const itemBasePrice = menuItem.harga + optionsPrice;
 
-                {/* Dine-in row */}
-                <div className="qty-row">
-                  <span className="qty-label">🍽️ Makan di sini</span>
-                  <div className="qty-controls">
-                    <button className="qty-btn" onClick={() => updateQuantity(menuItem.id, "dineIn", -1)}>−</button>
-                    <span className="qty-value">{dineInQuantity}</span>
-                    <button className="qty-btn" onClick={() => updateQuantity(menuItem.id, "dineIn", 1)}>+</button>
+            return (
+              <div key={cartItemId} className="basket-item">
+                <img
+                  src={menuItem.imagePath || "/Logo Canteen 375 (2).png"}
+                  alt={menuItem.namaMenu}
+                  className="item-img"
+                  onError={(e) => { (e.target as HTMLImageElement).src = "/Logo Canteen 375 (2).png"; }}
+                />
+                <div className="item-details">
+                  <p className="item-name">{menuItem.namaMenu}</p>
+                  {selectedOptions.length > 0 && (
+                    <div className="item-options-list">
+                      {selectedOptions.map((opt, i) => (
+                        <p key={i} className="item-option-text">
+                          ✓ {opt.optionName} {opt.additionalPrice > 0 ? `(+${formatPrice(opt.additionalPrice)})` : ''}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                  <p className="item-price">{formatPrice(itemBasePrice)}</p>
+
+                  {/* Dine-in row */}
+                  <div className="qty-row">
+                    <span className="qty-label">🍽️ Makan di sini</span>
+                    <div className="qty-controls">
+                      <button className="qty-btn" onClick={() => updateQuantity(cartItemId, "dineIn", -1)}>−</button>
+                      <span className="qty-value">{dineInQuantity}</span>
+                      <button className="qty-btn" onClick={() => updateQuantity(cartItemId, "dineIn", 1)}>+</button>
+                    </div>
                   </div>
+
+                  {/* Take-away row */}
+                  <div className="qty-row">
+                    <span className="qty-label">🥡 Bungkus</span>
+                    <div className="qty-controls">
+                      <button className="qty-btn" onClick={() => updateQuantity(cartItemId, "takeAway", -1)}>−</button>
+                      <span className="qty-value">{takeAwayQuantity}</span>
+                      <button className="qty-btn" onClick={() => updateQuantity(cartItemId, "takeAway", 1)}>+</button>
+                    </div>
+                  </div>
+
+                  <p className="item-subtotal">
+                    Subtotal: {formatPrice(itemBasePrice * (dineInQuantity + takeAwayQuantity))}
+                  </p>
                 </div>
 
-                {/* Take-away row */}
-                <div className="qty-row">
-                  <span className="qty-label">🥡 Bungkus</span>
-                  <div className="qty-controls">
-                    <button className="qty-btn" onClick={() => updateQuantity(menuItem.id, "takeAway", -1)}>−</button>
-                    <span className="qty-value">{takeAwayQuantity}</span>
-                    <button className="qty-btn" onClick={() => updateQuantity(menuItem.id, "takeAway", 1)}>+</button>
-                  </div>
-                </div>
-
-                <p className="item-subtotal">
-                  Subtotal: {formatPrice(menuItem.harga * (dineInQuantity + takeAwayQuantity))}
-                </p>
+                <button className="remove-btn" onClick={() => removeFromBasket(cartItemId)}>🗑️</button>
               </div>
-
-              <button className="remove-btn" onClick={() => removeFromBasket(menuItem.id)}>🗑️</button>
-            </div>
-          ))}
+            );
+          })}
         </div>
+
+        {/* ── People also ordered / Cross-selling ── */}
+        {crossSellItems.length > 0 && (
+          <div className="cross-sell-section">
+            <h3 className="cross-sell-title">Pelanggan lain juga memesan</h3>
+            <div className="cross-sell-scroll">
+              {crossSellItems.map(item => {
+                const added = addedCrossItems.has(item.id);
+                return (
+                  <div key={item.id} className="cross-sell-card">
+                    <div className="cs-image-wrap">
+                      <img src={item.imagePath || "/Logo Canteen 375 (2).png"} alt={item.namaMenu} className="cs-image" onError={e => e.currentTarget.src = "/Logo Canteen 375 (2).png"} />
+                      <button
+                        className={`cs-add-btn ${added ? 'added' : ''}`}
+                        onClick={() => {
+                          useBasket().addToBasket(item); // Note: using direct context might need refactoring if it causes issues, but we have addToBasket from top
+                          setAddedCrossItems(prev => new Set(prev).add(item.id));
+                          setTimeout(() => {
+                            setAddedCrossItems(prev => {
+                              const next = new Set(prev);
+                              next.delete(item.id);
+                              return next;
+                            });
+                          }, 800);
+                        }}
+                      >
+                        {added ? "✓" : "+"}
+                      </button>
+                    </div>
+                    <div className="cs-info">
+                      <p className="cs-name">{item.namaMenu}</p>
+                      <p className="cs-price">{formatPrice(item.harga)}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* ── Order summary ── */}
         <div className="summary-card">
           <h3>Ringkasan Pesanan</h3>
-          {basket.map(({ menuItem, dineInQuantity, takeAwayQuantity }) => (
-            <div key={menuItem.id} className="summary-row">
-              <span>{menuItem.namaMenu}</span>
-              <span>{formatPrice(menuItem.harga * (dineInQuantity + takeAwayQuantity))}</span>
+          {basket.map(({ cartItemId, menuItem, dineInQuantity, takeAwayQuantity, selectedOptions }) => {
+            const optionsPrice = selectedOptions.reduce((sum, opt) => sum + opt.additionalPrice, 0);
+            const itemBasePrice = menuItem.harga + optionsPrice;
+            return (
+              <div key={cartItemId} className="summary-row">
+                <div className="summary-item-info">
+                  <span className="summary-item-name">{menuItem.namaMenu} <span className="text-muted">x{dineInQuantity + takeAwayQuantity}</span></span>
+                  {selectedOptions.length > 0 && (
+                    <div className="summary-item-options">
+                      {selectedOptions.map((o, i) => (
+                        <span key={i} className="text-muted block">{o.optionName}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <span>{formatPrice(itemBasePrice * (dineInQuantity + takeAwayQuantity))}</span>
+              </div>
+            );
+          })}
+          <div className="summary-divider" />
+
+          <div className="summary-row fee-row">
+            <span>Subtotal</span>
+            <span>{formatPrice(totalPrice)}</span>
+          </div>
+          {takeAwayFee > 0 && (
+            <div className="summary-row fee-row">
+              <span>Biaya Bungkus (Take-away)</span>
+              <span>{formatPrice(takeAwayFee)}</span>
             </div>
-          ))}
+          )}
           <div className="summary-divider" />
           <div className="summary-total">
             <span>Total</span>
-            <span className="total-amount">{formatPrice(totalPrice)}</span>
+            <span className="total-amount">{formatPrice(totalPrice + takeAwayFee)}</span>
           </div>
 
           <div className="order-note">
@@ -181,13 +296,13 @@ export default function BasketPage() {
             disabled={submitting}
             onClick={handleOrder}
           >
-            {submitting ? "Memproses..." : `Pesan Sekarang • ${formatPrice(totalPrice)}`}
+            {submitting ? "Memproses..." : `Place Order`}
           </button>
         </div>
       </div>
 
       <style jsx>{`
-        .basket-page { min-height: 100vh; background: #f9f5f0; }
+        .basket-page { min-height: 100vh; background: #fff; }
         .basket-header {
           background: white;
           padding: 1rem 1.5rem;
@@ -256,8 +371,10 @@ export default function BasketPage() {
           font-size: 1rem;
           font-weight: 700;
           color: #2d241d;
-          margin: 0 0 0.25rem;
+          margin: 0 0 0.1rem;
         }
+        .item-options-list { margin-bottom: 0.5rem; display: flex; flex-direction: column; gap: 0.15rem; }
+        .item-option-text { font-size: 0.8rem; color: #8d6e63; margin: 0; line-height: 1.2; }
         .item-price {
           font-size: 0.9rem;
           color: #C51720;
@@ -283,7 +400,7 @@ export default function BasketPage() {
           background: #faf7f2;
           border-radius: 20px;
           padding: 0.2rem 0.5rem;
-          border: 1.5px solid #d4a373;
+          border: 1.5px solid #ece8e3;
         }
         .qty-btn {
           width: 24px; height: 24px;
@@ -298,7 +415,7 @@ export default function BasketPage() {
           align-items: center;
           justify-content: center;
           line-height: 1;
-          transition: background 0.2s;
+          transition: background 0.2s; 
         }
         .qty-btn:hover { background: #8b0000; }
         .qty-value {
@@ -341,17 +458,48 @@ export default function BasketPage() {
           color: #2d241d;
           margin: 0 0 1rem;
         }
+        .summary-card p {
+          font-size: 0.95rem;
+          color: #555;
+          margin: 0 0 1rem;
+        }
+
+        /* Cross Selling */
+        .cross-sell-section { margin-top: 0.5rem; }
+        .cross-sell-title { font-size: 1.15rem; font-weight: 800; color: #2d241d; margin: 0 0 1rem; }
+        .cross-sell-scroll { display: flex; gap: 1rem; overflow-x: auto; padding-bottom: 0.5rem; scrollbar-width: none; }
+        .cross-sell-scroll::-webkit-scrollbar { display: none; }
+        .cross-sell-card { min-width: 130px; width: 130px; display: flex; flex-direction: column; gap: 0.5rem; }
+        .cs-image-wrap { position: relative; width: 100%; aspect-ratio: 1; border-radius: 12px; overflow: hidden; background: #f5f0eb; border: 1.5px solid #ece8e3; }
+        .cs-image { width: 100%; height: 100%; object-fit: cover; }
+        .cs-add-btn { position: absolute; bottom: 8px; right: 8px; width: 32px; height: 32px; border-radius: 50%; background: #00b14f; color: white; border: none; font-size: 1.2rem; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0,177,79,0.3); transition: 0.2s; }
+        .cs-add-btn.added { background: #2e7d32; }
+        .cs-add-btn:hover { transform: scale(1.1); }
+        .cs-info { padding: 0 0.25rem; }
+        .cs-name { font-size: 0.85rem; color: #2d241d; font-weight: 600; margin: 0 0 0.2rem; line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+        .cs-price { font-size: 0.9rem; font-weight: 800; color: #2d241d; margin: 0; }
+
         .summary-row {
           display: flex;
           justify-content: space-between;
-          font-size: 0.9rem;
-          color: #5d4037;
-          margin-bottom: 0.5rem;
+          align-items: flex-start;
+          margin-bottom: 0.75rem;
+          font-size: 0.95rem;
+          color: #2d241d;
+          font-weight: 500;
         }
+        .fee-row { color: #555; }
+        .fee-label { display: flex; align-items: center; gap: 0.3rem; }
+        .fee-info { font-size: 0.8rem; color: #aaa; cursor: help; }
+        .summary-item-info { display: flex; flex-direction: column; gap: 0.2rem; }
+        .summary-item-name { font-weight: 600; }
+        .summary-item-options { display: flex; flex-direction: column; gap: 0.1rem; padding-left: 0.5rem; border-left: 2px solid #ece8e3; margin-top: 0.2rem; }
+        .text-muted { color: #8d6e63; font-size: 0.8rem; }
+        .block { display: block; }
         .summary-divider {
-          height: 1.5px;
-          background: #ece8e3;
-          margin: 0.75rem 0;
+          width: 100%;
+          border-top: 1.5px dashed #ece8e3;
+          margin: 1rem 0;
         }
         .summary-total {
           display: flex;
@@ -377,23 +525,23 @@ export default function BasketPage() {
         .btn-order {
           width: 100%;
           padding: 1rem;
-          background: linear-gradient(135deg, #C51720, #8b0000);
-          color: white;
+          border-radius: 16px;
           border: none;
-          border-radius: 14px;
-          font-family: inherit;
-          font-size: 1rem;
-          font-weight: 700;
+          background: #C51720;
+          color: white;
+          font-size: 1.05rem;
+          font-weight: 800;
           cursor: pointer;
-          transition: all 0.3s;
-          box-shadow: 0 6px 20px rgba(197,23,32,0.35);
+          transition: background 0.2s;
         }
         .btn-order:hover:not(:disabled) {
-          transform: translateY(-2px);
-          box-shadow: 0 10px 28px rgba(197,23,32,0.45);
+          background: #C51720;
         }
-        .btn-order:disabled { opacity: 0.65; cursor: not-allowed; }
-      `}</style>
+        .btn-order:disabled {
+          background: #ddd;
+          cursor: not-allowed;
+          color: #888;
+        } `}</style>
     </div>
   );
 }

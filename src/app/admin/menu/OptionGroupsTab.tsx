@@ -279,6 +279,18 @@ export default function OptionGroupsTab({ showToast }: {
                 onChange={() => setForm(f => ({ ...f, selectionRule: "optional" }))}
               />
               <label htmlFor="rule-optional">Optional for your customer to select</label>
+              {form.selectionRule === "optional" && (
+                <div className="og-rule-controls">
+                  <span style={{ fontSize: "0.85rem", color: "#666" }}>Maximum</span>
+                  <input
+                    className="og-count-input"
+                    type="number"
+                    min={1}
+                    value={form.ruleCount || 1}
+                    onChange={e => setForm(f => ({ ...f, ruleCount: Number(e.target.value) }))}
+                  />
+                </div>
+              )}
             </div>
           </div>
 

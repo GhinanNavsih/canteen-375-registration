@@ -147,15 +147,20 @@ export default function AboutPage() {
         .about-wrapper {
           min-height: 100vh;
           background: #C51720;
+          position: relative;
         }
         .about-main {
           padding: 2rem 1rem;
           display: flex;
           justify-content: center;
-          background:
-            radial-gradient(circle at top right, #faedcd, transparent),
-            radial-gradient(circle at bottom left, #fefae0, transparent);
+          /* The "Effect": Semi-transparent peach over red + massive blur */
+          background: rgba(250, 247, 242, 0.66);
+          backdrop-filter: blur(300px);
+          -webkit-backdrop-filter: blur(300px);
           min-height: calc(100vh - 65px);
+          background-image: 
+            radial-gradient(circle at 20% 20%, rgba(240, 231, 170, 0.5), transparent 66%),
+            radial-gradient(circle at 70% 80%, rgba(255, 248, 180, 0.5), transparent 66%);
         }
         .about-container {
           width: 100%;
