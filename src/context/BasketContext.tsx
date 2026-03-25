@@ -8,6 +8,7 @@ interface BasketContextType {
   totalItems: number;
   totalPrice: number;
   addToBasket: (item: MenuItem, selectedOptions?: SelectedOption[]) => void;
+  editBasketItem: (oldCartItemId: string, newSelectedOptions: SelectedOption[]) => void;
   removeFromBasket: (cartItemId: string) => void;
   updateQuantity: (cartItemId: string, type: "dineIn" | "takeAway", delta: number) => void;
   clearBasket: () => void;
@@ -46,6 +47,42 @@ export function BasketProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  const editBasketItem = useCallback((oldCartItemId: string, newSelectedOptions: SelectedOption[]) => {
+    setBasket((prev) => {
+      const itemToEdit = prev.find(b => b.cartItemId === oldCartItemId);
+      if (!itemToEdit) return prev;
+
+      const optString = [...newSelectedOptions]
+        .sort((a, b) => a.optionName.localeCompare(b.optionName))
+        .map(o => `${o.groupName}:${o.optionName}`)
+        .join('|');
+      const newCartItemId = `${itemToEdit.menuItem.id}-${optString}`;
+
+      if (newCartItemId === oldCartItemId) {
+        return prev.map(b => b.cartItemId === oldCartItemId ? { ...b, selectedOptions: newSelectedOptions } : b);
+      }
+
+      const existing = prev.find(b => b.cartItemId === newCartItemId);
+      if (existing) {
+        return prev
+          .filter(b => b.cartItemId !== oldCartItemId)
+          .map(b => b.cartItemId === newCartItemId 
+            ? { 
+                ...b, 
+                dineInQuantity: b.dineInQuantity + itemToEdit.dineInQuantity,
+                takeAwayQuantity: b.takeAwayQuantity + itemToEdit.takeAwayQuantity
+              } 
+            : b
+          );
+      }
+
+      return prev.map(b => b.cartItemId === oldCartItemId 
+        ? { ...b, cartItemId: newCartItemId, selectedOptions: newSelectedOptions } 
+        : b
+      );
+    });
+  }, []);
+
   const removeFromBasket = useCallback((cartItemId: string) => {
     setBasket((prev) => prev.filter((b) => b.cartItemId !== cartItemId));
   }, []);
@@ -62,8 +99,6 @@ export function BasketProvider({ children }: { children: React.ReactNode }) {
                 : { ...b, takeAwayQuantity: Math.max(0, b.takeAwayQuantity + delta) };
             return updated;
           })
-          // Remove item if both quantities reach 0
-          .filter((b) => b.dineInQuantity + b.takeAwayQuantity > 0)
       );
     },
     []
@@ -78,7 +113,7 @@ export function BasketProvider({ children }: { children: React.ReactNode }) {
 
   const totalPrice = basket.reduce(
     (sum, b) => {
-      const optionsPrice = b.selectedOptions.reduce((oSum, opt) => oSum + opt.additionalPrice, 0);
+      const optionsPrice = b.selectedOptions.reduce((oSum, opt) => oSum + opt.priceAdjustment, 0);
       const itemBasePrice = b.menuItem.harga + optionsPrice;
       const qty = b.dineInQuantity + b.takeAwayQuantity;
       return sum + (itemBasePrice * qty);
@@ -88,7 +123,7 @@ export function BasketProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <BasketContext.Provider
-      value={{ basket, totalItems, totalPrice, addToBasket, removeFromBasket, updateQuantity, clearBasket }}
+      value={{ basket, totalItems, totalPrice, addToBasket, editBasketItem, removeFromBasket, updateQuantity, clearBasket }}
     >
       {children}
     </BasketContext.Provider>

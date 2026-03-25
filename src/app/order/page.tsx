@@ -63,9 +63,25 @@ export default function OrderPage() {
         }));
         setCategoryOrder(sortedCats);
 
-        // 3. Fetch option groups
+        // 3. Fetch option groups and normalize field names
         const ogSnap = await getDocs(collection(db, "Canteens", "canteen375", "OptionGroups"));
-        setOptionGroups(ogSnap.docs.map(d => ({ ...d.data(), id: d.id } as OptionGroup)));
+        setOptionGroups(ogSnap.docs.map(d => {
+          const data = d.data();
+          return {
+            ...data,
+            id: d.id,
+            // Normalize options: support both additionalPrice and priceAdjustment
+            options: (data.options || []).map((opt: any) => ({
+              ...opt,
+              additionalPrice: opt.additionalPrice ?? opt.priceAdjustment ?? 0,
+            })),
+            linkedItemIds: data.linkedItemIds || [],
+            linkedMenuItems: data.linkedMenuItems || [],
+            selectionRule: data.selectionRule || (data.isRequired ? 'required' : 'optional'),
+            ruleType: data.ruleType || 'exactly',
+            ruleCount: data.ruleCount || 1,
+          } as OptionGroup;
+        }));
 
       } catch (err) {
         console.error("Error fetching menu:", err);
@@ -113,7 +129,10 @@ export default function OrderPage() {
   };
 
   const handleItemClick = (item: MenuItem) => {
-    const itemGroups = optionGroups.filter(g => g.linkedItemIds.includes(item.id));
+    const itemGroups = optionGroups.filter(g =>
+      g.linkedItemIds.includes(item.id) ||
+      (g.linkedMenuItems || []).includes(item.namaMenu)
+    );
     if (itemGroups.length > 0) {
       // Open customization drawer
       setSelectedItem(item);
@@ -139,29 +158,40 @@ export default function OrderPage() {
   // -- Modal Logic Validation --
   const activeItemGroups = useMemo(() => {
     if (!selectedItem) return [];
-    return optionGroups.filter(g => g.linkedItemIds.includes(selectedItem.id));
+    return optionGroups.filter(g =>
+      g.linkedItemIds.includes(selectedItem.id) ||
+      (g.linkedMenuItems || []).includes(selectedItem.namaMenu)
+    );
   }, [selectedItem, optionGroups]);
 
-  const toggleOption = (group: OptionGroup, optName: string, price: number) => {
+  const toggleOption = (group: OptionGroup, opt: { id?: string; name: string; additionalPrice: number }) => {
     setSelectedOptionsMap(prev => {
       const next = { ...prev };
       const currentSelections = next[group.id] || [];
-      const exists = currentSelections.find(o => o.optionName === optName);
+      const exists = currentSelections.find(o => o.optionName === opt.name);
+
+      const newSelection: SelectedOption = {
+        groupId: group.id,
+        groupName: group.name,
+        optionId: opt.id || '',
+        optionName: opt.name,
+        priceAdjustment: opt.additionalPrice,
+      };
 
       if (group.selectionRule === "required" && group.ruleType === "exactly" && group.ruleCount === 1) {
         // Radio button behavior
-        next[group.id] = [{ groupName: group.name, optionName: optName, additionalPrice: price }];
+        next[group.id] = [newSelection];
       } else {
         // Checkbox behavior
         if (exists) {
-          next[group.id] = currentSelections.filter(o => o.optionName !== optName);
+          next[group.id] = currentSelections.filter(o => o.optionName !== opt.name);
         } else {
           // Check limits
           const maxAllowed = group.selectionRule === "required" && (group.ruleType === "exactly" || group.ruleType === "at_most")
             ? group.ruleCount
             : (group.selectionRule === "optional" && group.ruleCount ? group.ruleCount : Infinity);
           if (currentSelections.length < maxAllowed) {
-            next[group.id] = [...currentSelections, { groupName: group.name, optionName: optName, additionalPrice: price }];
+            next[group.id] = [...currentSelections, newSelection];
           }
         }
       }
@@ -185,7 +215,7 @@ export default function OrderPage() {
     if (!selectedItem) return 0;
     let base = selectedItem.harga;
     Object.values(selectedOptionsMap).flat().forEach(opt => {
-      base += opt.additionalPrice;
+      base += opt.priceAdjustment;
     });
     return base;
   }, [selectedItem, selectedOptionsMap]);
@@ -197,7 +227,7 @@ export default function OrderPage() {
     setSelectedItem(null);
   };
 
-  const formatPrice = (price: number) => `Rp${price.toLocaleString("id-ID")}`;
+  const formatPrice = (price: number) => `Rp${(price || 0).toLocaleString("id-ID")}`;
 
   if (sessionLoading || loadingMenu) {
     return (
@@ -297,86 +327,89 @@ export default function OrderPage() {
       )}
 
       {/* ── MODAL CUSTOMIZATION DRAWER ── */}
-      <div className={`drawer-overlay ${selectedItem ? 'open' : ''}`} onClick={() => setSelectedItem(null)} />
-      <div className={`bottom-drawer ${selectedItem ? 'open' : ''}`}>
-        {selectedItem && (
-          <>
-            <div className="drawer-header-image" style={{ backgroundImage: `url(${selectedItem.imagePath || "/Logo Canteen 375 (2).png"})` }}>
-              <button className="drawer-circle-btn drawer-close-btn" onClick={() => setSelectedItem(null)}>✕</button>
-              <button className="drawer-circle-btn drawer-share-btn">🔗</button>
-            </div>
-            <div className="drawer-body-config">
-              <div className="drawer-item-title-section">
-                <h2>{selectedItem.namaMenu}</h2>
-                <div className="drawer-item-base-price">
-                  <span>{selectedItem.harga.toLocaleString("id-ID")}</span>
-                  <span className="text-muted">Base price</span>
+      <div className={`drawer-overlay ${selectedItem ? 'open' : ''}`}>
+        <div className="drawer-content">
+          {selectedItem && (
+            <>
+              <div className="drawer-image-section">
+                <img 
+                  src={selectedItem.imagePath || "/Logo Canteen 375 (2).png"} 
+                  alt={selectedItem.namaMenu} 
+                  className="drawer-hero-img"
+                  onError={(e) => { (e.target as HTMLImageElement).src = "/Logo Canteen 375 (2).png"; }}
+                />
+                <div className="drawer-image-overlay" />
+                <button className="btn-close-drawer-floating" onClick={() => setSelectedItem(null)}>✕</button>
+                <div className="drawer-header-content">
+                  <h2>{selectedItem.namaMenu}</h2>
+                  <p>Sesuaikan pesananmu</p>
                 </div>
               </div>
-              <p className="drawer-item-desc">{selectedItem.menuDescription}</p>
 
-              {activeItemGroups.map(group => {
-                const currentSelections = selectedOptionsMap[group.id] || [];
-                const isSatisfied = group.selectionRule === "optional" ||
-                  (group.ruleType === "exactly" && currentSelections.length === group.ruleCount) ||
-                  (group.ruleType === "at_least" && currentSelections.length >= group.ruleCount) ||
-                  (group.ruleType === "at_most" && currentSelections.length > 0 && currentSelections.length <= group.ruleCount);
+              <div className="drawer-scroll-area">
+                {activeItemGroups.map(group => {
+                  const currentSelections = selectedOptionsMap[group.id] || [];
+                  const isSatisfied = group.selectionRule === "optional" ||
+                    (group.ruleType === "exactly" && currentSelections.length === group.ruleCount) ||
+                    (group.ruleType === "at_least" && currentSelections.length >= group.ruleCount) ||
+                    (group.ruleType === "at_most" && currentSelections.length > 0 && currentSelections.length <= group.ruleCount);
 
-                const isSingleRadio = group.selectionRule === "required" && group.ruleType === "exactly" && group.ruleCount === 1;
+                  const isSingleRadio = group.selectionRule === "required" && group.ruleType === "exactly" && group.ruleCount === 1;
 
-                return (
-                  <div key={group.id} className="option-group-section">
-                    <div className="og-header">
-                      <h3>{group.name}</h3>
-                      {isSatisfied ? (
-                        <span className="og-badge completed">Completed</span>
-                      ) : (
-                        <span className="og-badge pending">
-                          {group.selectionRule === "required"
-                            ? `Pilih ${group.ruleType === 'exactly' ? 'tepat' : group.ruleType === 'at_least' ? 'minimal' : 'maksimal'} ${group.ruleCount}`
-                            : `Optional${group.ruleCount ? `, max ${group.ruleCount}` : ''}`}
-                        </span>
-                      )}
-                    </div>
+                  return (
+                    <div key={group.id} className="option-group-section">
+                      <div className="og-header">
+                        <h3>{group.name}</h3>
+                        {isSatisfied ? (
+                          <span className="og-badge completed">Completed</span>
+                        ) : (
+                          <span className="og-badge pending">
+                            {group.selectionRule === "required"
+                              ? `Pilih ${group.ruleType === 'exactly' ? 'tepat' : group.ruleType === 'at_least' ? 'minimal' : 'maksimal'} ${group.ruleCount}`
+                              : `Optional${group.ruleCount ? `, max ${group.ruleCount}` : ''}`}
+                          </span>
+                        )}
+                      </div>
 
-                    <div className="og-options">
-                      {group.options.map(opt => {
-                        const isSelected = currentSelections.some(o => o.optionName === opt.name);
-                        return (
-                          <label key={opt.name} className="og-option-row">
-                            <div className="og-option-input-wrap">
-                              <div className="og-control-container">
-                                <input
-                                  type={isSingleRadio ? "radio" : "checkbox"}
-                                  name={`group-${group.id}`}
-                                  checked={isSelected}
-                                  onChange={() => toggleOption(group, opt.name, opt.additionalPrice)}
-                                />
+                      <div className="og-options">
+                        {group.options.map(opt => {
+                          const isSelected = currentSelections.some(o => o.optionName === opt.name);
+                          return (
+                            <label key={opt.name} className="og-option-row">
+                              <div className="og-option-input-wrap">
+                                <div className="og-control-container">
+                                  <input
+                                    type={isSingleRadio ? "radio" : "checkbox"}
+                                    name={`group-${group.id}`}
+                                    checked={isSelected}
+                                    onChange={() => toggleOption(group, opt)}
+                                  />
+                                </div>
+                                <span className="og-option-name">{opt.name}</span>
                               </div>
-                              <span className="og-option-name">{opt.name}</span>
-                            </div>
-                            {opt.additionalPrice > 0 && (
-                              <span className="og-option-price">+{formatPrice(opt.additionalPrice)}</span>
-                            )}
-                          </label>
-                        );
-                      })}
+                              {opt.additionalPrice > 0 && (
+                                <span className="og-option-price">+{formatPrice(opt.additionalPrice)}</span>
+                              )}
+                            </label>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="drawer-footer-sticky">
-              <button
-                className="btn-add-to-basket"
-                onClick={confirmModalAdd}
-                disabled={!isModalValid}
-              >
-                Add to Basket - {formatPrice(modalTotalPrice)}
-              </button>
-            </div>
-          </>
-        )}
+                  );
+                })}
+              </div>
+              <div className="drawer-footer-sticky">
+                <button
+                  className="btn-add-to-basket"
+                  onClick={confirmModalAdd}
+                  disabled={!isModalValid}
+                >
+                  Tambah Ke Keranjang • {formatPrice(modalTotalPrice)}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       <style jsx>{`
@@ -401,87 +434,132 @@ export default function OrderPage() {
         .basket-fab-right { font-weight: 700; display: flex; align-items: center; }
         @keyframes slideUp { from { opacity: 0; transform: translateX(-50%) translateY(30px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 
-        /* Drawer Overlay */
-        .drawer-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); z-index: 999; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+        /* ── MODAL / DRAWER SYSTEM ── */
+        .drawer-overlay {
+          position: fixed;
+          top: 0; left: 0; right: 0; bottom: 0;
+          background: #fff;
+          z-index: 2000;
+          display: flex;
+          opacity: 0;
+          pointer-events: none;
+          transition: 0.3s;
+        }
         .drawer-overlay.open { opacity: 1; pointer-events: auto; }
 
-        /* Bottom Drawer */
-        .bottom-drawer { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-radius: 16px 16px 0 0; z-index: 1000; transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
-        .bottom-drawer.open { transform: translateY(0); }
-
-        .drawer-header-image { position: relative; width: 100%; height: 260px; background-size: cover; background-position: center; border-radius: 16px 16px 0 0; }
-        .drawer-circle-btn { position: absolute; top: 1rem; width: 36px; height: 36px; background: white; border: none; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; cursor: pointer; box-shadow: 0 2px 10px rgba(0,0,0,0.1); color: #333; transition: transform 0.2s; }
-        .drawer-circle-btn:active { transform: scale(0.9); }
-        .drawer-close-btn { left: 1rem; }
-        .drawer-share-btn { right: 1rem; font-size: 1rem; }
-        
-        .drawer-body-config { flex: 1; overflow-y: auto; padding: 1.25rem 1.25rem 6.5rem; }
-        .drawer-item-title-section { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem; }
-        .drawer-item-title-section h2 { margin: 0; font-size: 1.4rem; font-weight: 700; color: #2d241d; flex: 1; padding-right: 1rem; line-height: 1.2; }
-        .drawer-item-base-price { display: flex; flex-direction: column; align-items: flex-end; }
-        .drawer-item-base-price span:first-child { font-weight: 500; font-size: 1.2rem; color: #2d241d; }
-        .text-muted { font-size: 0.75rem; color: #888; font-weight: 400; margin-top: 0.1rem; }
-        .drawer-item-desc { font-size: 0.95rem; color: #666; font-weight: 400; line-height: 1.4; margin: 0 0 1.5rem; }
-
-        .option-group-section { padding-top: 1.5rem; border-top: 1px solid #eee; margin-top: 1rem; }
-        .og-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
-        .og-header h3 { margin: 0; font-size: 1.1rem; font-weight: 600; color: #2d241d; }
-        .og-badge { font-size: 0.75rem; font-weight: 600; padding: 0.25rem 0.6rem; border-radius: 20px; }
-        .og-badge.completed { background: #C51720; color: white; }
-        .og-badge.pending { background: #f2f2f2; color: #666; }
-        
-        .og-options { display: flex; flex-direction: column; gap: 1rem; }
-        .og-option-row { display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
-        .og-option-input-wrap { display: flex; align-items: center; gap: 0.85rem; flex: 1; min-width: 0; }
-        .og-control-container { 
-          width: 24px; 
-          height: 24px; 
-          display: flex; 
-          align-items: center; 
-          justify-content: center; 
-          flex-shrink: 0; 
+        .drawer-content {
+          width: 100%;
+          height: 100vh;
+          background: white;
+          display: flex;
+          flex-direction: column;
+          transform: translateX(100%);
+          transition: transform 0.35s cubic-bezier(0.32, 0.72, 0, 1);
         }
-        .og-control-container input {
-          width: 22px;
-          height: 22px;
-          margin: 0;
-          cursor: pointer;
-          appearance: none;
-          -webkit-appearance: none;
-          border: 2px solid #ccc;
-          outline: none;
-          background-color: #fff;
-          transition: all 0.2s;
-          box-sizing: border-box;
-          aspect-ratio: 1 / 1;
-        }
+        .drawer-overlay.open .drawer-content { transform: translateX(0); }
 
-        .og-control-container input[type="radio"] {
+        .drawer-image-section {
+          position: relative;
+          width: 100%;
+          height: 250px;
+          background: #faf7f2;
+        }
+        .drawer-hero-img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+        .drawer-image-overlay {
+          position: absolute;
+          top: 0; left: 0; right: 0; bottom: 0;
+          background: linear-gradient(to bottom, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0) 25%, rgba(0,0,0,0.8) 100%);
+        }
+        .btn-close-drawer-floating {
+          position: absolute;
+          top: 1.25rem;
+          left: 1.25rem;
+          background: white;
+          border: none;
+          width: 40px; height: 40px;
           border-radius: 50%;
+          font-size: 1.25rem;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #2d241d;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+          z-index: 10;
+          transition: 0.2s;
         }
-        .og-control-container input[type="radio"]:checked {
-          border-color: #C51720;
-          background-image: radial-gradient(circle, #C51720 45%, transparent 50%);
-        }
+        .btn-close-drawer-floating:hover { transform: scale(1.1); }
 
-        .og-control-container input[type="checkbox"] {
-          border-radius: 6px;
+        .drawer-header-content {
+          position: absolute;
+          bottom: 1.5rem;
+          left: 1.5rem;
+          right: 1.5rem;
+          color: white;
         }
-        .og-control-container input[type="checkbox"]:checked {
-          background-color: #C51720;
-          border-color: #C51720;
-          background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M20.285 2l-11.285 11.567-5.286-5.011-3.714 3.716 9 8.728 15-15.285z"/></svg>');
-          background-size: 14px;
-          background-repeat: no-repeat;
-          background-position: center;
+        .drawer-header-content h2 { font-size: 1.8rem; font-weight: 800; margin: 0 0 0.25rem; color: white; text-shadow: 0 2px 4px rgba(0,0,0,0.3); }
+        .drawer-header-content p { font-size: 1rem; color: rgba(255,255,255,0.9); margin: 0; font-weight: 600; }
+
+        .drawer-scroll-area { 
+          flex: 1; 
+          overflow-y: auto; 
+          padding: 1.5rem;
+          scrollbar-width: none;
+          background: white;
         }
+        .drawer-scroll-area::-webkit-scrollbar { display: none; }
 
-        .og-option-name { font-size: 0.95rem; font-weight: 400; color: #2d241d; }
-        .og-option-price { font-size: 0.95rem; font-weight: 400; color: #444; }
+        .option-group-section { margin-bottom: 2rem; }
+        .og-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+        .og-header h3 { font-size: 1.05rem; font-weight: 800; color: #2d241d; margin: 0; }
+        .og-badge { font-size: 0.75rem; font-weight: 700; padding: 0.25rem 0.6rem; border-radius: 6px; }
+        .og-badge.pending { background: #fffcf0; color: #b45309; border: 1px solid #fde68a; }
+        .og-badge.completed { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
 
-        .drawer-footer-sticky { position: absolute; bottom: 0; left: 0; right: 0; padding: 1rem 1.25rem; background: white; box-shadow: 0 -2px 10px rgba(0,0,0,0.05); }
-        .btn-add-to-basket { width: 100%; padding: 1rem; background: #C51720; color: white; border: none; border-radius: 50px; font-size: 1.05rem; font-weight: 700; cursor: pointer; transition: 0.2s; }
-        .btn-add-to-basket:disabled { background: #e0e0e0; color: #a0a0a0; cursor: not-allowed; }
+        .og-options { display: flex; flex-direction: column; gap: 0.5rem; }
+        .og-option-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 1rem;
+          background: #faf7f2;
+          border-radius: 14px;
+          cursor: pointer;
+          transition: background 0.2s;
+          border: 1.5px solid transparent;
+        }
+        .og-option-row:has(input:checked) { background: #fff; border-color: #C51720; box-shadow: 0 4px 12px rgba(197,23,32,0.08); }
+        .og-option-input-wrap { display: flex; align-items: center; gap: 0.85rem; }
+        .og-option-name { font-size: 0.95rem; font-weight: 600; color: #2d241d; }
+        .og-option-price { font-size: 0.9rem; font-weight: 700; color: #C51720; }
+
+        .drawer-footer-sticky {
+          padding: 1.5rem;
+          background: white;
+          border-top: 1.5px solid #faf7f2;
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+        }
+        .btn-add-to-basket {
+          width: 100%;
+          padding: 1.1rem;
+          border-radius: 18px;
+          border: none;
+          background: #C51720;
+          color: white;
+          font-size: 1.1rem;
+          font-weight: 800;
+          cursor: pointer;
+          transition: all 0.2s;
+          box-shadow: 0 8px 20px rgba(197,23,32,0.25);
+        }
+        .btn-add-to-basket:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 10px 25px rgba(197,23,32,0.3); }
+        .btn-add-to-basket:disabled { background: #e5e7eb; color: #9ca3af; cursor: not-allowed; box-shadow: none; }
       `}</style>
     </div>
   );

@@ -1,0 +1,173 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── HELPER FUNCTIONS ──────────────────────────────────────────────────────
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      // Recognizes specific emails or the admin custom claim
+      return isAuthenticated() && (
+        request.auth.token.admin == true || 
+        request.auth.token.email == "gnavsih1@gmail.com" || 
+        request.auth.token.email == "admin@canteen375.com"
+      );
+    }
+
+    // ── NEW COLLECTIONS FOR POS APP ───────────────────────────────────────────
+    
+    match /Categories/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /assets/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /config/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /DailyTransaction/{id} { allow read, write: if isAuthenticated(); }
+    match /MonthlyTransaction/{id} { allow read, write: if isAuthenticated(); }
+    match /YearlyTransaction/{id} { allow read, write: if isAuthenticated(); }
+    match /Status/{id} { allow read, write: if isAuthenticated(); }
+
+    // ── MEMBERS COLLECTION ─────────────────────────────────────────────────────
+    match /Members/{uid} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() 
+                    && request.auth.uid == uid 
+                    && request.resource.data.uid == uid;
+      allow update: if isAdmin() || (isAuthenticated() && request.auth.uid == uid);
+      allow delete: if isAdmin();
+    }
+
+    // ── VOUCHERS COLLECTIONS ──────────────────────────────────────────────────
+    match /voucher/{id} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow write: if isAdmin();
+    }
+    match /vouchers/{id} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow write: if isAdmin();
+    }
+
+    // ── VOUCHER GROUP (CAMPAIGNS) ─────────────────────────────────────────────
+    match /voucherGroup/{groupId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // ── COMPETITION RECORDS (LEADERBOARD DATA) ────────────────────────────────
+    match /competitionRecords/{monthId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // ── FEEDBACKS ─────────────────────────────────────────────────────────────
+    match /feedbacks/{feedbackId} {
+      allow create: if isAuthenticated() && request.resource.data.memberId == request.auth.uid;
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.memberId == request.auth.uid);
+      allow update, delete: if isAdmin();
+    }
+
+    // ── CANTEENS (BRANCH DATA) ────────────────────────────────────────────────
+    match /Canteens/{canteenId} {
+      
+      allow read: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow create, delete: if isAdmin();
+      
+      match /Inventory/{id} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
+      
+      match /DailyStockLogs/{id} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
+      
+      match /MenuCollection/{menuId} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
+      
+      match /Metadata/{configId} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
+      
+      match /Metadata/Settings {
+      	allow read: if isAuthenticated();
+      }
+      
+      match /OptionGroups/{groupId} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
+      
+      match /suppliers/{supplierId} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
+      
+      match /shoppingOrders/{orderId} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
+      
+      // STATUS & RECENTLY SERVED: Order queue and completed orders
+      match /Status/{orderId} {
+        allow read, write: if isAuthenticated();
+      }
+      
+      match /RecentlyServed/{orderId} {
+        allow read, write: if isAuthenticated();
+      }
+      
+      match /SelfOrders/{orderId} {
+        allow create: if isAdmin() || (isAuthenticated() && request.resource.data.userId == request.auth.uid);
+        allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+        allow update, delete: if isAdmin();
+      }
+      
+      match /OpenBills/{memberId} {
+        // Broad access for all authenticated POS users to read and write to standard bills
+        allow read, write: if isAuthenticated();
+        
+        // Explicitly allow writing to the nested subcollection where individual tab entries live
+        match /Orders/{tabOrderId} {
+          allow read, write: if isAuthenticated();
+        }
+      }
+      
+      match /SettledBills/{billId} {
+      	allow read, write: if isAuthenticated();
+      }
+      
+      match /Orders/{orderID} {
+      	allow read, write: if isAuthenticated();
+      }
+      
+    }
+
+    // ── PUBLIC PRODUCTS (OLD VERSION) ─────────────────────────────────────────
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /products_test/{productId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}

@@ -54,7 +54,22 @@ export default function OptionGroupsTab({ showToast }: {
         getDocs(collection(db, ...OG_PATH)),
         getDocs(collection(db, ...MENU_PATH)),
       ]);
-      const fetchedGroups = ogSnap.docs.map(d => ({ ...d.data(), id: d.id } as OptionGroup));
+      const fetchedGroups = ogSnap.docs.map(d => {
+          const data = d.data();
+          return {
+            ...data,
+            id: d.id,
+            options: (data.options || []).map((opt: any) => ({
+              ...opt,
+              additionalPrice: opt.additionalPrice ?? opt.priceAdjustment ?? 0,
+            })),
+            linkedItemIds: data.linkedItemIds || [],
+            linkedMenuItems: data.linkedMenuItems || [],
+            selectionRule: data.selectionRule || (data.isRequired ? 'required' : 'optional'),
+            ruleType: data.ruleType || 'exactly',
+            ruleCount: data.ruleCount || 1,
+          } as OptionGroup;
+        });
       const fetchedMenuItems = menuSnap.docs.map(d => ({ ...d.data(), id: d.id } as MenuItem));
       setGroups(fetchedGroups);
       setMenuItems(fetchedMenuItems);
@@ -149,7 +164,10 @@ export default function OptionGroupsTab({ showToast }: {
     }
   };
 
-  const formatPrice = (p: number) => p === 0 ? "Gratis" : `+Rp${p.toLocaleString("id-ID")}`;
+  const formatPrice = (p: number) => {
+    const val = p || 0;
+    return val === 0 ? "Gratis" : `+Rp${val.toLocaleString("id-ID")}`;
+  };
 
   const filteredGroups = groups.filter(g =>
     g.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -391,12 +409,20 @@ export default function OptionGroupsTab({ showToast }: {
                   : "Optional"}
               </div>
               {/* Linked Items */}
-              {selectedGroup.linkedItemIds.length > 0 && (
+              {(selectedGroup.linkedItemIds.length > 0 || (selectedGroup.linkedMenuItems || []).length > 0) && (
                 <div className="og-linked-badge">
-                  Linked to: {selectedGroup.linkedItemIds.map(id => {
-                    const item = menuItems.find(m => m.id === id);
-                    return item?.namaMenu;
-                  }).filter(Boolean).join(", ")}
+                  Linked to: {(() => {
+                    // Resolve linked IDs to names where possible
+                    const namesFromIds = selectedGroup.linkedItemIds.map(id => {
+                      const item = menuItems.find(m => m.id === id);
+                      return item?.namaMenu || id;
+                    });
+                    // Include linkedMenuItems that aren't already covered
+                    const extraNames = (selectedGroup.linkedMenuItems || []).filter(
+                      name => !namesFromIds.includes(name)
+                    );
+                    return [...namesFromIds, ...extraNames].filter(Boolean).join(", ");
+                  })()}
                 </div>
               )}
               {/* Options */}

@@ -293,7 +293,7 @@ export default function AdminMenuPage() {
   }, [menuItems, searchQuery]);
 
   const activeItems = groupedItems.get(activeCategory) || [];
-  const formatPrice = (p: number) => `Rp${p.toLocaleString("id-ID")}`;
+  const formatPrice = (p: number) => `Rp${(p || 0).toLocaleString("id-ID")}`;
 
   const hasOrderChanged = useMemo(() => {
     if (rearrangeMode === 'categories') {
@@ -427,7 +427,7 @@ export default function AdminMenuPage() {
               <div className="modal-body">
                 <div className="field"><label>Nama Menu *</label><input value={form.namaMenu} onChange={e => setForm(f => ({ ...f, namaMenu: e.target.value }))} /></div>
                 <div className="field-row">
-                  <div className="field"><label>Harga *</label><input type="number" value={form.harga} onChange={e => setForm(f => ({ ...f, harga: Number(e.target.value) }))} /></div>
+                  <div className="field"><label>Harga *</label><input type="number" onWheel={e => (e.target as HTMLInputElement).blur()} value={form.harga} onChange={e => setForm(f => ({ ...f, harga: Number(e.target.value) }))} /></div>
                   <div className="field">
                     <label>Kategori *</label>
                     <input value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} list="cat-suggestions" />
@@ -438,7 +438,7 @@ export default function AdminMenuPage() {
                 </div>
                 <div className="field-row">
                   <div className="field"><label>URL Gambar</label><input value={form.imagePath} onChange={e => setForm(f => ({ ...f, imagePath: e.target.value }))} /></div>
-                  <div className="field"><label>Isi/Pack (Take-away)</label><input type="number" min="1" value={form.unitsPerPackage} onChange={e => setForm(f => ({ ...f, unitsPerPackage: Math.max(1, Number(e.target.value)) }))} /></div>
+                  <div className="field"><label>Isi/Pack (Take-away)</label><input type="number" onWheel={e => (e.target as HTMLInputElement).blur()} min="1" value={form.unitsPerPackage} onChange={e => setForm(f => ({ ...f, unitsPerPackage: Math.max(1, Number(e.target.value)) }))} /></div>
                 </div>
                 <div className="field"><label>Deskripsi</label><textarea value={form.menuDescription} onChange={e => setForm(f => ({ ...f, menuDescription: e.target.value }))} rows={2} /></div>
                 <div className="toggle-row">
@@ -693,6 +693,9 @@ function AdminStyles() {
       .field { display: flex; flex-direction: column; gap: 0.4rem; }
       .field label { font-size: 0.85rem; font-weight: 600; color: #555; }
       .field input, .field textarea { padding: 0.7rem; border: 1px solid #ddd; border-radius: 6px; font-family: inherit; }
+      .field input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+      .field input[type=number]::-webkit-outer-spin-button,
+      .field input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
       .field input:focus, .field textarea:focus { border-color: #00b14f; outline: none; }
       .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
       

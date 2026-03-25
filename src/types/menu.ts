@@ -12,8 +12,11 @@ export interface MenuItem {
 }
 
 export interface OptionItem {
+  id?: string;
   name: string;
   additionalPrice: number;
+  // Firebase may store price as priceAdjustment instead
+  priceAdjustment?: number;
 }
 
 export interface OptionGroup {
@@ -24,12 +27,15 @@ export interface OptionGroup {
   ruleType: 'exactly' | 'at_least' | 'at_most'; // only relevant when required
   ruleCount: number;                              // how many the customer must pick
   linkedItemIds: string[];                        // IDs of MenuItems this group applies to
+  linkedMenuItems?: string[];                     // Menu names this group applies to (from POS app)
 }
 
 export interface SelectedOption {
+  groupId: string;
   groupName: string;
+  optionId: string;
   optionName: string;
-  additionalPrice: number;
+  priceAdjustment: number;
 }
 
 export interface BasketItem {
@@ -47,7 +53,6 @@ export interface SelfOrder {
     dineInQuantity: number;
     takeAwayQuantity: number;
     harga: number; // base price + options price
-    viaAssociationRules: boolean;
     selectedOptions?: SelectedOption[];
   }[];
   total: number;

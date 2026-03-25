@@ -1,17 +1,17 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { collection, doc, setDoc, serverTimestamp, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useMember } from "@/context/MemberContext";
 import { useBasket } from "@/context/BasketContext";
 import Navbar from "@/components/Navbar";
-import { MenuItem } from "@/types/menu";
+import { MenuItem, OptionGroup, SelectedOption, BasketItem } from "@/types/menu";
 
 export default function BasketPage() {
   const { member } = useMember();
-  const { basket, totalPrice, totalItems, updateQuantity, removeFromBasket, clearBasket } = useBasket();
+  const { basket, totalPrice, totalItems, addToBasket, editBasketItem, updateQuantity, removeFromBasket, clearBasket } = useBasket();
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState<{ shortCode: string } | null>(null);
@@ -20,8 +20,13 @@ export default function BasketPage() {
   const [crossSellItems, setCrossSellItems] = useState<MenuItem[]>([]);
   const [addedCrossItems, setAddedCrossItems] = useState<Set<string>>(new Set());
 
+  // Edit Drawer State
+  const [optionGroups, setOptionGroups] = useState<OptionGroup[]>([]);
+  const [editingItem, setEditingItem] = useState<BasketItem | null>(null);
+  const [selectedOptionsMap, setSelectedOptionsMap] = useState<Record<string, SelectedOption[]>>({});
+
   // Take-away Fee Logic
-  // Every 4 slots occupied = Rp 1.000
+  // Every 4 slots occupied = Rp 1.000 (1-3 free, 4 adds Rp1k)
   const totalTakeAwaySlots = basket.reduce((total, b) => {
     if (b.takeAwayQuantity === 0) return total;
     const unitsPerPackage = b.menuItem.unitsPerPackage || 1;
@@ -29,25 +34,46 @@ export default function BasketPage() {
     return total + slots;
   }, 0);
 
-  const takeAwayFee = totalTakeAwaySlots > 0 ? Math.ceil(totalTakeAwaySlots / 4) * 1000 : 0;
+  const takeAwayFee = Math.floor(totalTakeAwaySlots / 4) * 1000;
 
-  const formatPrice = (price: number) => `Rp${price.toLocaleString("id-ID")}`;
+  const formatPrice = (price: number) => `Rp${(price || 0).toLocaleString("id-ID")}`;
 
   useEffect(() => {
-    // Fetch recommended items for "People also ordered"
-    const fetchCrossSell = async () => {
+    // 1. Fetch recommended items for "People also ordered"
+    const fetchCrossSellAndOG = async () => {
       try {
-        const snap = await getDocs(collection(db, "Canteens", "canteen375", "MenuCollection"));
-        const items = snap.docs.map(d => ({ ...d.data(), id: d.id } as MenuItem));
-        // Filter out items already in basket to avoid redundant suggestions
+        const [menuSnap, ogSnap] = await Promise.all([
+          getDocs(collection(db, "Canteens", "canteen375", "MenuCollection")),
+          getDocs(collection(db, "Canteens", "canteen375", "OptionGroups"))
+        ]);
+
+        const items = menuSnap.docs.map(d => ({ ...d.data(), id: d.id } as MenuItem));
         const inBasketIds = new Set(basket.map(b => b.menuItem.id));
         const suggestions = items.filter(i => i.isRecommended && !inBasketIds.has(i.id)).slice(0, 5);
         setCrossSellItems(suggestions);
+
+        // 2. Fetch option groups and normalize
+        setOptionGroups(ogSnap.docs.map(d => {
+          const data = d.data();
+          return {
+            ...data,
+            id: d.id,
+            options: (data.options || []).map((opt: any) => ({
+              ...opt,
+              additionalPrice: opt.additionalPrice ?? opt.priceAdjustment ?? 0,
+            })),
+            linkedItemIds: data.linkedItemIds || [],
+            linkedMenuItems: data.linkedMenuItems || [],
+            selectionRule: data.selectionRule || (data.isRequired ? 'required' : 'optional'),
+            ruleType: data.ruleType || 'exactly',
+            ruleCount: data.ruleCount || 1,
+          } as OptionGroup;
+        }));
       } catch (err) {
-        console.error("Error fetching cross-sell items", err);
+        console.error("Error fetching data", err);
       }
     };
-    fetchCrossSell();
+    fetchCrossSellAndOG();
   }, [basket]);
 
   const generateShortCode = () => {
@@ -56,19 +82,20 @@ export default function BasketPage() {
   };
 
   const handleOrder = async () => {
-    if (!member || basket.length === 0) return;
+    if (!member || totalItems === 0) return;
     setSubmitting(true);
 
     try {
       const shortCode = generateShortCode();
-      const orderItems = basket.map((b) => ({
-        namaPesanan: b.menuItem.namaMenu,
-        harga: b.menuItem.harga + b.selectedOptions.reduce((acc, o) => acc + o.additionalPrice, 0),
-        dineInQuantity: b.dineInQuantity,
-        takeAwayQuantity: b.takeAwayQuantity,
-        viaAssociationRules: false,
-        selectedOptions: b.selectedOptions,
-      }));
+      const orderItems = basket
+        .filter(b => (b.dineInQuantity + b.takeAwayQuantity) > 0)
+        .map((b) => ({
+          namaPesanan: b.menuItem.namaMenu,
+          harga: b.menuItem.harga + b.selectedOptions.reduce((acc, o) => acc + o.priceAdjustment, 0),
+          dineInQuantity: b.dineInQuantity,
+          takeAwayQuantity: b.takeAwayQuantity,
+          selectedOptions: b.selectedOptions,
+        }));
 
       const orderId = `SO_${shortCode.replace("#", "")}`;
       await setDoc(doc(db, "Canteens", "canteen375", "SelfOrders", orderId), {
@@ -90,6 +117,86 @@ export default function BasketPage() {
     } finally {
       setSubmitting(false);
     }
+  };
+  // -- Edit Logic --
+  const activeItemGroups = useMemo(() => {
+    if (!editingItem) return [];
+    const item = editingItem.menuItem;
+    return optionGroups.filter(g =>
+      g.linkedItemIds.includes(item.id) ||
+      (g.linkedMenuItems || []).includes(item.namaMenu)
+    );
+  }, [editingItem, optionGroups]);
+
+  const toggleOption = (group: OptionGroup, opt: { id?: string; name: string; additionalPrice: number }) => {
+    setSelectedOptionsMap(prev => {
+      const next = { ...prev };
+      const currentSelections = next[group.id] || [];
+      const exists = currentSelections.find(o => o.optionName === opt.name);
+
+      const newSelection: SelectedOption = {
+        groupId: group.id,
+        groupName: group.name,
+        optionId: opt.id || '',
+        optionName: opt.name,
+        priceAdjustment: opt.additionalPrice,
+      };
+
+      if (group.selectionRule === "required" && group.ruleType === "exactly" && group.ruleCount === 1) {
+        next[group.id] = [newSelection];
+      } else {
+        if (exists) {
+          next[group.id] = currentSelections.filter(o => o.optionName !== opt.name);
+        } else {
+          const maxAllowed = group.selectionRule === "required" && (group.ruleType === "exactly" || group.ruleType === "at_most")
+            ? group.ruleCount
+            : (group.selectionRule === "optional" && group.ruleCount ? group.ruleCount : Infinity);
+          if (currentSelections.length < maxAllowed) {
+            next[group.id] = [...currentSelections, newSelection];
+          }
+        }
+      }
+      return next;
+    });
+  };
+
+  const isModalValid = useMemo(() => {
+    for (const g of activeItemGroups) {
+      const selectedCount = (selectedOptionsMap[g.id] || []).length;
+      if (g.selectionRule === "required") {
+        if (g.ruleType === "exactly" && selectedCount !== g.ruleCount) return false;
+        if (g.ruleType === "at_least" && selectedCount < g.ruleCount) return false;
+        if (g.ruleType === "at_most" && (selectedCount === 0 || selectedCount > g.ruleCount)) return false;
+      }
+    }
+    return true;
+  }, [activeItemGroups, selectedOptionsMap]);
+
+  const modalTotalPrice = useMemo(() => {
+    if (!editingItem) return 0;
+    let base = editingItem.menuItem.harga;
+    Object.values(selectedOptionsMap).flat().forEach(opt => {
+      base += opt.priceAdjustment;
+    });
+    return base;
+  }, [editingItem, selectedOptionsMap]);
+
+  const handleEditOpen = (item: BasketItem) => {
+    setEditingItem(item);
+    // Initialize chosen options map
+    const map: Record<string, SelectedOption[]> = {};
+    item.selectedOptions.forEach(opt => {
+      if (!map[opt.groupId]) map[opt.groupId] = [];
+      map[opt.groupId].push(opt);
+    });
+    setSelectedOptionsMap(map);
+  };
+
+  const confirmModalEdit = () => {
+    if (!editingItem || !isModalValid) return;
+    const compiledOptions = Object.values(selectedOptionsMap).flat();
+    editBasketItem(editingItem.cartItemId, compiledOptions);
+    setEditingItem(null);
   };
 
   // ── Order placed success screen ──
@@ -152,56 +259,67 @@ export default function BasketPage() {
         {/* ── Order items list ── */}
         <div className="items-list">
           {basket.map(({ cartItemId, menuItem, dineInQuantity, takeAwayQuantity, selectedOptions }) => {
-            const optionsPrice = selectedOptions.reduce((sum, opt) => sum + opt.additionalPrice, 0);
+            const optionsPrice = selectedOptions.reduce((sum, opt) => sum + opt.priceAdjustment, 0);
             const itemBasePrice = menuItem.harga + optionsPrice;
 
             return (
               <div key={cartItemId} className="basket-item">
-                <img
-                  src={menuItem.imagePath || "/Logo Canteen 375 (2).png"}
-                  alt={menuItem.namaMenu}
-                  className="item-img"
-                  onError={(e) => { (e.target as HTMLImageElement).src = "/Logo Canteen 375 (2).png"; }}
-                />
-                <div className="item-details">
-                  <p className="item-name">{menuItem.namaMenu}</p>
-                  {selectedOptions.length > 0 && (
-                    <div className="item-options-list">
-                      {selectedOptions.map((opt, i) => (
-                        <p key={i} className="item-option-text">
-                          ✓ {opt.optionName} {opt.additionalPrice > 0 ? `(+${formatPrice(opt.additionalPrice)})` : ''}
-                        </p>
-                      ))}
-                    </div>
-                  )}
-                  <p className="item-price">{formatPrice(itemBasePrice)}</p>
+                <div 
+                  className="basket-item-flex"
+                  onClick={() => handleEditOpen({ cartItemId, menuItem, dineInQuantity, takeAwayQuantity, selectedOptions })}
+                >
+                  {/* Left: Image */}
+                  <img
+                    src={menuItem.imagePath || "/Logo Canteen 375 (2).png"}
+                    alt={menuItem.namaMenu}
+                    className="item-img"
+                    onError={(e) => { (e.target as HTMLImageElement).src = "/Logo Canteen 375 (2).png"; }}
+                  />
 
-                  {/* Dine-in row */}
-                  <div className="qty-row">
-                    <span className="qty-label">🍽️ Makan di sini</span>
-                    <div className="qty-controls">
-                      <button className="qty-btn" onClick={() => updateQuantity(cartItemId, "dineIn", -1)}>−</button>
-                      <span className="qty-value">{dineInQuantity}</span>
-                      <button className="qty-btn" onClick={() => updateQuantity(cartItemId, "dineIn", 1)}>+</button>
-                    </div>
+                  {/* Mid-Left: Basic Info */}
+                  <div className="item-info">
+                    <p className="item-name">{menuItem.namaMenu}</p>
+                    {selectedOptions.length > 0 && (
+                      <div className="item-options-list">
+                        {selectedOptions.map((opt, i) => (
+                          <span key={i} className="item-option-text">
+                            {opt.optionName}{i < selectedOptions.length - 1 ? ", " : ""}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <span className="item-price-tag">{formatPrice(itemBasePrice * (dineInQuantity + takeAwayQuantity))}</span>
                   </div>
 
-                  {/* Take-away row */}
-                  <div className="qty-row">
-                    <span className="qty-label">🥡 Bungkus</span>
-                    <div className="qty-controls">
-                      <button className="qty-btn" onClick={() => updateQuantity(cartItemId, "takeAway", -1)}>−</button>
-                      <span className="qty-value">{takeAwayQuantity}</span>
-                      <button className="qty-btn" onClick={() => updateQuantity(cartItemId, "takeAway", 1)}>+</button>
+                  {/* Mid-Right: Stacked Qty Controls */}
+                  <div className="item-qty-stack" onClick={e => e.stopPropagation()}>
+                    <div className="qty-pill-row">
+                      <span className="qty-icon-mini">🍽️</span>
+                      <div className="qty-toggle-pills">
+                        <button className="pill-btn" onClick={() => updateQuantity(cartItemId, "dineIn", -1)}>−</button>
+                        <span className="pill-val">{dineInQuantity}</span>
+                        <button className="pill-btn" onClick={() => updateQuantity(cartItemId, "dineIn", 1)}>+</button>
+                      </div>
                     </div>
+                    <div className="qty-pill-row">
+                      <span className="qty-icon-mini">🥡</span>
+                      <div className="qty-toggle-pills">
+                        <button className="pill-btn" onClick={() => updateQuantity(cartItemId, "takeAway", -1)}>−</button>
+                        <span className="pill-val">{takeAwayQuantity}</span>
+                        <button className="pill-btn" onClick={() => updateQuantity(cartItemId, "takeAway", 1)}>+</button>
+                      </div>
+                    </div>
+                    
+                    {(dineInQuantity + takeAwayQuantity === 0) && (
+                      <button 
+                        className="btn-delete-item" 
+                        onClick={(e) => { e.stopPropagation(); removeFromBasket(cartItemId); }}
+                      >
+                        Hapus
+                      </button>
+                    )}
                   </div>
-
-                  <p className="item-subtotal">
-                    Subtotal: {formatPrice(itemBasePrice * (dineInQuantity + takeAwayQuantity))}
-                  </p>
                 </div>
-
-                <button className="remove-btn" onClick={() => removeFromBasket(cartItemId)}>🗑️</button>
               </div>
             );
           })}
@@ -221,7 +339,7 @@ export default function BasketPage() {
                       <button
                         className={`cs-add-btn ${added ? 'added' : ''}`}
                         onClick={() => {
-                          useBasket().addToBasket(item); // Note: using direct context might need refactoring if it causes issues, but we have addToBasket from top
+                          addToBasket(item);
                           setAddedCrossItems(prev => new Set(prev).add(item.id));
                           setTimeout(() => {
                             setAddedCrossItems(prev => {
@@ -250,7 +368,7 @@ export default function BasketPage() {
         <div className="summary-card">
           <h3>Ringkasan Pesanan</h3>
           {basket.map(({ cartItemId, menuItem, dineInQuantity, takeAwayQuantity, selectedOptions }) => {
-            const optionsPrice = selectedOptions.reduce((sum, opt) => sum + opt.additionalPrice, 0);
+            const optionsPrice = selectedOptions.reduce((sum, opt) => sum + opt.priceAdjustment, 0);
             const itemBasePrice = menuItem.harga + optionsPrice;
             return (
               <div key={cartItemId} className="summary-row">
@@ -293,7 +411,7 @@ export default function BasketPage() {
 
           <button
             className="btn-order"
-            disabled={submitting}
+            disabled={submitting || totalItems === 0}
             onClick={handleOrder}
           >
             {submitting ? "Memproses..." : `Place Order`}
@@ -382,67 +500,131 @@ export default function BasketPage() {
           margin: 0 0 0.75rem;
         }
 
-        .qty-row {
+        .basket-item {
+          background: white;
+          border-radius: 18px;
+          border: 1.5px solid #ece8e3;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+          margin-bottom: 0.85rem;
+          overflow: hidden;
+          transition: 0.2s;
+        }
+        .basket-item:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(0,0,0,0.08); }
+
+        .basket-item-flex {
           display: flex;
           align-items: center;
-          justify-content: space-between;
-          margin-bottom: 0.5rem;
+          padding: 0.85rem 1.25rem;
+          gap: 1.5rem;
+          cursor: pointer;
+          width: 100%;
         }
-        .qty-label {
-          font-size: 0.82rem;
-          font-weight: 600;
-          color: #5d4037;
+
+        .item-img {
+          width: 70px; height: 70px;
+          border-radius: 14px;
+          object-fit: cover;
+          flex-shrink: 0;
+          background: #faf7f2;
         }
-        .qty-controls {
+
+        .item-info {
+          flex: 1;
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 0.2rem;
+        }
+        .item-name {
+          font-size: 1rem;
+          font-weight: 800;
+          color: #2d241d;
+          margin: 0;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .item-options-list {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0;
+          margin: 0.1rem 0;
+        }
+        .item-option-text {
+          font-size: 0.8rem;
+          color: #8d6e63;
+          font-weight: 500;
+          white-space: nowrap;
+        }
+        .item-price-tag {
+          font-size: 0.9rem;
+          color: #C51720;
+          font-weight: 800;
+        }
+
+        .item-qty-stack {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 0.4rem;
+          padding-left: 1.25rem;
+          border-left: 1.5px solid #faf7f2;
+          min-width: 130px;
+          margin-left: auto;
+        }
+        .qty-pill-row {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          width: 100%;
+          gap: 0.5rem;
+        }
+        .qty-icon-mini { font-size: 0.9rem; opacity: 0.8; }
+        .qty-toggle-pills {
           display: flex;
           align-items: center;
           gap: 0.5rem;
           background: #faf7f2;
+          padding: 0.2rem 0.4rem;
           border-radius: 20px;
-          padding: 0.2rem 0.5rem;
-          border: 1.5px solid #ece8e3;
+          border: 1px solid #efeae4;
         }
-        .qty-btn {
+        .pill-btn {
           width: 24px; height: 24px;
           border-radius: 50%;
           border: none;
           background: #C51720;
           color: white;
           font-size: 1rem;
-          font-weight: 700;
-          cursor: pointer;
+          font-weight: 800;
           display: flex;
           align-items: center;
           justify-content: center;
-          line-height: 1;
-          transition: background 0.2s; 
+          cursor: pointer;
         }
-        .qty-btn:hover { background: #8b0000; }
-        .qty-value {
+        .pill-val {
           font-size: 0.95rem;
-          font-weight: 700;
+          font-weight: 800;
           color: #2d241d;
-          min-width: 20px;
+          min-width: 18px;
           text-align: center;
         }
-        .item-subtotal {
-          font-size: 0.82rem;
-          color: #8d6e63;
-          font-weight: 600;
-          margin: 0.4rem 0 0;
-        }
 
-        .remove-btn {
-          position: absolute;
-          top: 0.75rem; right: 0.75rem;
-          background: none;
-          border: none;
-          font-size: 1.1rem;
+        .btn-delete-item {
+          width: 100%;
+          background: #fef2f2;
+          border: 1px solid #fee2e2;
+          color: #C51720;
+          font-size: 0.75rem;
+          font-weight: 800;
+          padding: 0.35rem 0.6rem;
+          border-radius: 6px;
           cursor: pointer;
-          opacity: 0.6;
-          transition: opacity 0.2s;
+          transition: 0.2s;
+          margin-top: 0.25rem;
+          text-align: center;
         }
-        .remove-btn:hover { opacity: 1; }
+        .btn-delete-item:hover { background: #fee2e2; }
 
         /* ── Summary Card ── */
         .summary-card {
@@ -472,8 +654,8 @@ export default function BasketPage() {
         .cross-sell-card { min-width: 130px; width: 130px; display: flex; flex-direction: column; gap: 0.5rem; }
         .cs-image-wrap { position: relative; width: 100%; aspect-ratio: 1; border-radius: 12px; overflow: hidden; background: #f5f0eb; border: 1.5px solid #ece8e3; }
         .cs-image { width: 100%; height: 100%; object-fit: cover; }
-        .cs-add-btn { position: absolute; bottom: 8px; right: 8px; width: 32px; height: 32px; border-radius: 50%; background: #00b14f; color: white; border: none; font-size: 1.2rem; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0,177,79,0.3); transition: 0.2s; }
-        .cs-add-btn.added { background: #2e7d32; }
+        .cs-add-btn { position: absolute; bottom: 8px; right: 8px; width: 32px; height: 32px; border-radius: 50%; background: #C51720; color: white; border: none; font-size: 1.2rem; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(197,23,32,0.3); transition: 0.2s; }
+        .cs-add-btn.added { background: #8b0000; }
         .cs-add-btn:hover { transform: scale(1.1); }
         .cs-info { padding: 0 0.25rem; }
         .cs-name { font-size: 0.85rem; color: #2d241d; font-weight: 600; margin: 0 0 0.2rem; line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -541,7 +723,216 @@ export default function BasketPage() {
           background: #ddd;
           cursor: not-allowed;
           color: #888;
-        } `}</style>
+        }
+
+        /* ── MODAL / DRAWER SYSTEM ── */
+        .drawer-overlay {
+          position: fixed;
+          top: 0; left: 0; right: 0; bottom: 0;
+          background: #fff;
+          z-index: 2000;
+          display: flex;
+          animation: fadeIn 0.3s ease;
+        }
+        .drawer-content {
+          width: 100%;
+          height: 100vh;
+          background: white;
+          display: flex;
+          flex-direction: column;
+          animation: slideInSide 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+        }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideInSide { from { transform: translateX(100%); } to { transform: translateX(0); } }
+
+        .drawer-image-section {
+          position: relative;
+          width: 100%;
+          height: 250px;
+          background: #faf7f2;
+        }
+        .drawer-hero-img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+        .drawer-image-overlay {
+          position: absolute;
+          top: 0; left: 0; right: 0; bottom: 0;
+          background: linear-gradient(to bottom, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0) 25%, rgba(0,0,0,0.8) 100%);
+        }
+        .btn-close-drawer-floating {
+          position: absolute;
+          top: 1.25rem;
+          left: 1.25rem;
+          background: white;
+          border: none;
+          width: 40px; height: 40px;
+          border-radius: 50%;
+          font-size: 1.25rem;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #2d241d;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+          z-index: 10;
+          transition: 0.2s;
+        }
+        .btn-close-drawer-floating:hover { transform: scale(1.1); }
+
+        .drawer-header-content {
+          position: absolute;
+          bottom: 1.5rem;
+          left: 1.5rem;
+          right: 1.5rem;
+          color: white;
+        }
+        .drawer-header-content h2 { font-size: 1.8rem; font-weight: 800; margin: 0 0 0.25rem; color: white; text-shadow: 0 2px 4px rgba(0,0,0,0.3); }
+        .drawer-header-content p { font-size: 1rem; color: rgba(255,255,255,0.9); margin: 0; font-weight: 600; }
+
+        .drawer-scroll-area { 
+          flex: 1; 
+          overflow-y: auto; 
+          padding: 1.5rem;
+          scrollbar-width: none;
+          background: white;
+        }
+        .drawer-scroll-area::-webkit-scrollbar { display: none; }
+
+        .option-group-section { margin-bottom: 2rem; }
+        .og-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+        .og-header h3 { font-size: 1.05rem; font-weight: 800; color: #2d241d; margin: 0; }
+        .og-badge { font-size: 0.75rem; font-weight: 700; padding: 0.25rem 0.6rem; border-radius: 6px; }
+        .og-badge.pending { background: #fffcf0; color: #b45309; border: 1px solid #fde68a; }
+        .og-badge.completed { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+
+        .og-options { display: flex; flex-direction: column; gap: 0.5rem; }
+        .og-option-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 1rem;
+          background: #faf7f2;
+          border-radius: 14px;
+          cursor: pointer;
+          transition: background 0.2s;
+          border: 1.5px solid transparent;
+        }
+        .og-option-row:has(input:checked) { background: #fff; border-color: #C51720; box-shadow: 0 4px 12px rgba(197,23,32,0.08); }
+        .og-option-input-wrap { display: flex; align-items: center; gap: 0.85rem; }
+        .og-option-name { font-size: 0.95rem; font-weight: 600; color: #2d241d; }
+        .og-option-price { font-size: 0.9rem; font-weight: 700; color: #C51720; }
+
+        .drawer-footer-sticky {
+          padding: 1.5rem;
+          background: white;
+          border-top: 1.5px solid #faf7f2;
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+        }
+        .btn-add-to-basket {
+          width: 100%;
+          padding: 1.1rem;
+          border-radius: 18px;
+          border: none;
+          background: #C51720;
+          color: white;
+          font-size: 1.1rem;
+          font-weight: 800;
+          cursor: pointer;
+          transition: all 0.2s;
+          box-shadow: 0 8px 20px rgba(197,23,32,0.25);
+        }
+        .btn-add-to-basket:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 10px 25px rgba(197,23,32,0.3); }
+        .btn-add-to-basket:disabled { background: #e5e7eb; color: #9ca3af; cursor: not-allowed; box-shadow: none; }
+      `}</style>
+
+      {/* ── CUSTOMIZATION DRAWER ── */}
+      {editingItem && (
+        <div className="drawer-overlay">
+          <div className="drawer-content">
+            <div className="drawer-image-section">
+              <img 
+                src={editingItem.menuItem.imagePath || "/Logo Canteen 375 (2).png"} 
+                alt={editingItem.menuItem.namaMenu} 
+                className="drawer-hero-img"
+                onError={(e) => { (e.target as HTMLImageElement).src = "/Logo Canteen 375 (2).png"; }}
+              />
+              <div className="drawer-image-overlay" />
+              <button className="btn-close-drawer-floating" onClick={() => setEditingItem(null)}>✕</button>
+              <div className="drawer-header-content">
+                <h2>{editingItem.menuItem.namaMenu}</h2>
+                <p>Ubah pilihan sesuai seleramu</p>
+              </div>
+            </div>
+
+            <div className="drawer-scroll-area">
+              {activeItemGroups.map(group => {
+                const currentSelections = selectedOptionsMap[group.id] || [];
+                const isSatisfied = group.selectionRule === "optional" ||
+                  (group.ruleType === "exactly" && currentSelections.length === group.ruleCount) ||
+                  (group.ruleType === "at_least" && currentSelections.length >= group.ruleCount) ||
+                  (group.ruleType === "at_most" && currentSelections.length > 0 && currentSelections.length <= group.ruleCount);
+
+                const isSingleRadio = group.selectionRule === "required" && group.ruleType === "exactly" && group.ruleCount === 1;
+
+                return (
+                  <div key={group.id} className="option-group-section">
+                    <div className="og-header">
+                      <h3>{group.name}</h3>
+                      {isSatisfied ? (
+                        <span className="og-badge completed">Completed</span>
+                      ) : (
+                        <span className="og-badge pending">
+                          {group.selectionRule === "required"
+                            ? `Pilih ${group.ruleType === 'exactly' ? 'tepat' : group.ruleType === 'at_least' ? 'minimal' : 'maksimal'} ${group.ruleCount}`
+                            : `Optional${group.ruleCount ? `, max ${group.ruleCount}` : ''}`}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="og-options">
+                      {group.options.map(opt => {
+                        const isSelected = currentSelections.some(o => o.optionName === opt.name);
+                        return (
+                          <label key={opt.name} className="og-option-row">
+                            <div className="og-option-input-wrap">
+                              <div className="og-control-container">
+                                <input
+                                  type={isSingleRadio ? "radio" : "checkbox"}
+                                  name={`group-${group.id}`}
+                                  checked={isSelected}
+                                  onChange={() => toggleOption(group, opt)}
+                                />
+                              </div>
+                              <span className="og-option-name">{opt.name}</span>
+                            </div>
+                            {opt.additionalPrice > 0 && (
+                              <span className="og-option-price">+{formatPrice(opt.additionalPrice)}</span>
+                            )}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="drawer-footer-sticky">
+              <button
+                className="btn-add-to-basket"
+                onClick={confirmModalEdit}
+                disabled={!isModalValid}
+              >
+                Konfirmasi Perubahan • {formatPrice(modalTotalPrice)}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

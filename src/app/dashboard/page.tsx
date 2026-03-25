@@ -36,7 +36,7 @@ export default function DashboardPage() {
   }, [isAdmin, sessionLoading, router]);
 
   useEffect(() => {
-    if (!sessionLoading && !member) {
+    if (!sessionLoading && !member && !isAdmin) {
       router.push("/leaderboard");
       return;
     }

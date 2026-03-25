@@ -2,11 +2,13 @@
 
 import { useState } from "react";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 
 export default function LoginPage() {
+    const searchParams = useSearchParams();
+    const redirect = searchParams.get("redirect") || "/dashboard";
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [showPassword, setShowPassword] = useState(false);
@@ -23,7 +25,7 @@ export default function LoginPage() {
             // Firebase Auth handles credential verification — no manual Firestore read needed.
             await signInWithEmailAndPassword(auth, email, password);
             // onAuthStateChanged in MemberContext will automatically update the session.
-            router.push("/dashboard");
+            router.push(redirect);
         } catch (err: any) {
             console.error(err);
             const code = err.code as string;

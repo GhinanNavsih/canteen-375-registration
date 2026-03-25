@@ -18,9 +18,14 @@ export default function Navbar() {
         <div className="nav-links">
           {/* ── Admin links ── */}
           {isAdmin && (
-            <Link href="/admin/menu" className={`nav-link ${isActive("/admin/menu") ? "active" : ""}`}>
-              🍽️ Menu Manager
-            </Link>
+            <>
+              <Link href="/admin/menu" className={`nav-link ${isActive("/admin/menu") ? "active" : ""}`}>
+                🍽️ Menu Manager
+              </Link>
+              <Link href="/admin/menu-display" className={`nav-link ${isActive("/admin/menu-display") ? "active" : ""}`}>
+                📺 Menu Display
+              </Link>
+            </>
           )}
 
           {/* ── Member links ── */}
