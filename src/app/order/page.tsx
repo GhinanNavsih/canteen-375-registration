@@ -58,7 +58,7 @@ export default function OrderPage() {
 
         // Consistent sorting: Order first, then Name
         setMenuItems(items.sort((a, b) => {
-          const orderDiff = (a.order ?? 0) - (b.order ?? 0);
+          const orderDiff = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
           return orderDiff !== 0 ? orderDiff : a.namaMenu.localeCompare(b.namaMenu);
         }));
         setCategoryOrder(sortedCats);
@@ -568,7 +568,7 @@ export default function OrderPage() {
 function MenuCard({ item, onAdd, quantity, formatPrice }: { item: MenuItem; onAdd: (e: React.MouseEvent) => void; quantity: number; formatPrice: (p: number) => string; }) {
   return (
     <div className="menu-card">
-      <div className="card-image-wrap">
+      <div className="card-image-wrap" style={{ aspectRatio: item.imageAspectRatio === "3:4" ? "3/4" : "1" }}>
         <img src={item.imagePath || "/Logo Canteen 375 (2).png"} alt={item.namaMenu} className="card-image" onError={e => e.currentTarget.src = "/Logo Canteen 375 (2).png"} />
       </div>
       <div className="card-body">
@@ -588,8 +588,8 @@ function MenuCard({ item, onAdd, quantity, formatPrice }: { item: MenuItem; onAd
       <style jsx>{`
         .menu-card { background: white; border-radius: 16px; overflow: hidden; border: 1.5px solid #ece8e3; transition: transform 0.2s, box-shadow 0.2s; box-shadow: 0 2px 8px rgba(0,0,0,0.06); height: 100%; display: flex; flex-direction: column; }
         .menu-card:hover { transform: translateY(-3px); box-shadow: 0 8px 20px rgba(0,0,0,0.1); }
-        .card-image-wrap { position: relative; width: 100%; padding-top: 70%; overflow: hidden; background: #f5f0eb; }
-        .card-image { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s; }
+        .card-image-wrap { position: relative; width: 100%; overflow: hidden; background: #f5f0eb; }
+        .card-image { width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s; }
         .menu-card:hover .card-image { transform: scale(1.05); }
         .card-body { padding: 0.75rem; flex: 1; display: flex; flex-direction: column; }
         .card-name { font-size: 0.9rem; font-weight: 700; color: #2d241d; margin: 0 0 0.2rem; line-height: 1.3; }
@@ -609,7 +609,7 @@ function MenuCard({ item, onAdd, quantity, formatPrice }: { item: MenuItem; onAd
 function MenuListItem({ item, onAdd, quantity, formatPrice }: { item: MenuItem; onAdd: (e: React.MouseEvent) => void; quantity: number; formatPrice: (p: number) => string; }) {
   return (
     <div className="list-item">
-      <img src={item.imagePath || "/Logo Canteen 375 (2).png"} alt={item.namaMenu} className="list-image" onError={e => e.currentTarget.src = "/Logo Canteen 375 (2).png"} />
+      <img src={item.imagePath || "/Logo Canteen 375 (2).png"} alt={item.namaMenu} className="list-image" style={{ aspectRatio: item.imageAspectRatio === "3:4" ? "3/4" : "1" }} onError={e => e.currentTarget.src = "/Logo Canteen 375 (2).png"} />
       <div className="list-body">
         <p className="list-name">{item.namaMenu}</p>
         {item.menuDescription && <p className="list-desc">{item.menuDescription}</p>}
@@ -626,7 +626,7 @@ function MenuListItem({ item, onAdd, quantity, formatPrice }: { item: MenuItem; 
       </div>
       <style jsx>{`
         .list-item { display: flex; align-items: flex-start; gap: 1rem; background: transparent; padding: 1.25rem 0; border-bottom: 1px solid #eee; }
-        .list-image { width: 110px; height: 110px; border-radius: 12px; object-fit: cover; flex-shrink: 0; background: #f5f0eb; border: 1px solid #eaeaea; }
+        .list-image { width: 110px; border-radius: 12px; object-fit: cover; flex-shrink: 0; background: #f5f0eb; border: 1px solid #eaeaea; }
         .list-body { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: space-between; min-height: 110px; }
         .list-name { font-size: 1rem; font-weight: 600; color: #2d241d; margin: 0 0 0.2rem; font-family: inherit; }
         .list-desc { font-size: 0.85rem; color: #777; margin: 0 0 0.5rem; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }

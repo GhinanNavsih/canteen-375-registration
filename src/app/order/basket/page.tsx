@@ -273,6 +273,7 @@ export default function BasketPage() {
                     src={menuItem.imagePath || "/Logo Canteen 375 (2).png"}
                     alt={menuItem.namaMenu}
                     className="item-img"
+                    style={{ aspectRatio: menuItem.imageAspectRatio === "3:4" ? "3/4" : "1" }}
                     onError={(e) => { (e.target as HTMLImageElement).src = "/Logo Canteen 375 (2).png"; }}
                   />
 
@@ -334,7 +335,7 @@ export default function BasketPage() {
                 const added = addedCrossItems.has(item.id);
                 return (
                   <div key={item.id} className="cross-sell-card">
-                    <div className="cs-image-wrap">
+                    <div className="cs-image-wrap" style={{ aspectRatio: item.imageAspectRatio === "3:4" ? "3/4" : "1" }}>
                       <img src={item.imagePath || "/Logo Canteen 375 (2).png"} alt={item.namaMenu} className="cs-image" onError={e => e.currentTarget.src = "/Logo Canteen 375 (2).png"} />
                       <button
                         className={`cs-add-btn ${added ? 'added' : ''}`}
@@ -478,7 +479,7 @@ export default function BasketPage() {
           position: relative;
         }
         .item-img {
-          width: 80px; height: 80px;
+          width: 80px;
           border-radius: 12px;
           object-fit: cover;
           flex-shrink: 0;
@@ -521,7 +522,7 @@ export default function BasketPage() {
         }
 
         .item-img {
-          width: 70px; height: 70px;
+          width: 70px;
           border-radius: 14px;
           object-fit: cover;
           flex-shrink: 0;
@@ -652,7 +653,7 @@ export default function BasketPage() {
         .cross-sell-scroll { display: flex; gap: 1rem; overflow-x: auto; padding-bottom: 0.5rem; scrollbar-width: none; }
         .cross-sell-scroll::-webkit-scrollbar { display: none; }
         .cross-sell-card { min-width: 130px; width: 130px; display: flex; flex-direction: column; gap: 0.5rem; }
-        .cs-image-wrap { position: relative; width: 100%; aspect-ratio: 1; border-radius: 12px; overflow: hidden; background: #f5f0eb; border: 1.5px solid #ece8e3; }
+        .cs-image-wrap { position: relative; width: 100%; border-radius: 12px; overflow: hidden; background: #f5f0eb; border: 1.5px solid #ece8e3; }
         .cs-image { width: 100%; height: 100%; object-fit: cover; }
         .cs-add-btn { position: absolute; bottom: 8px; right: 8px; width: 32px; height: 32px; border-radius: 50%; background: #C51720; color: white; border: none; font-size: 1.2rem; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(197,23,32,0.3); transition: 0.2s; }
         .cs-add-btn.added { background: #8b0000; }

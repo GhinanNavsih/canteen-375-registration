@@ -4,10 +4,11 @@ export interface MenuItem {
   harga: number;
   category: string;
   imagePath: string;
+  imageAspectRatio?: "1:1" | "3:4";
   isMakanan: boolean;
   isRecommended?: boolean;
   menuDescription?: string;
-  order?: number;
+  sortOrder?: number;
   unitsPerPackage?: number;
 }
 

@@ -53,7 +53,7 @@ export default function MenuDisplayPage() {
 
         setMenuItems(
           items.sort((a, b) => {
-            const orderDiff = (a.order ?? 0) - (b.order ?? 0);
+            const orderDiff = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
             return orderDiff !== 0 ? orderDiff : a.namaMenu.localeCompare(b.namaMenu);
           })
         );
@@ -151,7 +151,7 @@ export default function MenuDisplayPage() {
   /* ── Card renderer (inline to avoid styled-jsx scoping issues) ── */
   const renderCard = (item: MenuItem, keyPrefix: string = "") => (
     <div className="mdl-card" key={`${keyPrefix}${item.id}`}>
-      <div className="mdl-card-img-wrap">
+      <div className="mdl-card-img-wrap" style={{ aspectRatio: item.imageAspectRatio === "3:4" ? "3/4" : "1" }}>
         <img
           src={item.imagePath || "/Logo Canteen 375 (2).png"}
           alt={item.namaMenu}
@@ -272,14 +272,13 @@ export default function MenuDisplayPage() {
         .mdl-card-img-wrap {
           position: relative;
           width: 100%;
-          aspect-ratio: 1;
           background: #f5dcc3;
           overflow: hidden;
           display: flex;
           align-items: center;
           justify-content: center;
           border-radius: 16px;
-          box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+          box-shadow: 0 8px 12px rgba(0, 0, 0, 0.33);
         }
         .mdl-card-img {
           width: 100%;
@@ -325,7 +324,7 @@ export default function MenuDisplayPage() {
           margin: 0;
           line-height: 1.3;
           flex: 1;
-          font-style: italic;
+          font-style: regular;
           font-family: 'Playfair Display', serif;
         }
         .mdl-card-price {
@@ -342,6 +341,7 @@ export default function MenuDisplayPage() {
           color: #a0917e;
           line-height: 1.5;
           margin: 0;
+          font-style: italic;
           display: -webkit-box;
           -webkit-line-clamp: 2;
           -webkit-box-orient: vertical;

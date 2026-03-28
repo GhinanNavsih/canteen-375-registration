@@ -8,23 +8,30 @@ import {
 import { db } from "@/lib/firebase";
 import { useMember } from "@/context/MemberContext";
 import Navbar from "@/components/Navbar";
+import ImageCropModal from "@/components/ImageCropModal";
 import { MenuItem } from "@/types/menu";
 import OptionGroupsTab from "./OptionGroupsTab";
 
 const MENU_COLLECTION_PATH = ["Canteens", "canteen375", "MenuCollection"];
 const CONFIG_DOC_PATH = ["Canteens", "canteen375", "Metadata", "MenuConfig"];
 
-const emptyForm = (nextOrder: number, defaultCategory: string): Omit<MenuItem, "id"> => ({
-  namaMenu: "",
-  harga: 0,
-  category: defaultCategory || "",
-  imagePath: "",
-  isMakanan: true,
-  isRecommended: false,
-  menuDescription: "",
-  order: nextOrder,
-  unitsPerPackage: 1,
-});
+const emptyForm = (nextOrder: number, defaultCategory: string): Omit<MenuItem, "id"> => {
+  // Auto-detect isMakanan based on category name
+  const isMakanan = !defaultCategory.toLowerCase().includes("minuman");
+
+  return {
+    namaMenu: "",
+    harga: 0,
+    category: defaultCategory || "",
+    imagePath: "",
+    imageAspectRatio: "1:1",
+    isMakanan,
+    isRecommended: false,
+    menuDescription: "",
+    sortOrder: nextOrder,
+    unitsPerPackage: 1,
+  };
+};
 
 export default function AdminMenuPage() {
   const { isAdmin, loading: sessionLoading } = useMember();
@@ -55,6 +62,7 @@ export default function AdminMenuPage() {
   const [saving, setSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<MenuItem | null>(null);
   const [toastMsg, setToastMsg] = useState<{ text: string; type: "success" | "error" } | null>(null);
+  const [cropModalOpen, setCropModalOpen] = useState(false);
 
   // Click outside listener for dropdowns
   const catMenuRef = useRef<HTMLDivElement>(null);
@@ -109,7 +117,7 @@ export default function AdminMenuPage() {
       }
 
       setMenuItems(items.sort((a, b) => {
-        const diff = (a.order ?? 0) - (b.order ?? 0);
+        const diff = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
         return diff !== 0 ? diff : a.namaMenu.localeCompare(b.namaMenu);
       }));
 
@@ -141,7 +149,7 @@ export default function AdminMenuPage() {
   const openCreate = () => {
     setEditingItem(null);
     const catItems = menuItems.filter(i => i.category === activeCategory);
-    const maxOrder = catItems.length > 0 ? Math.max(...catItems.map(i => i.order ?? 0)) : 0;
+    const maxOrder = catItems.length > 0 ? Math.max(...catItems.map(i => i.sortOrder ?? 0)) : 0;
     setForm(emptyForm(maxOrder + 1, activeCategory));
     setItemsMenuOpen(false);
     setModalOpen(true);
@@ -154,10 +162,11 @@ export default function AdminMenuPage() {
       harga: item.harga,
       category: item.category,
       imagePath: item.imagePath,
+      imageAspectRatio: item.imageAspectRatio ?? "1:1",
       isMakanan: item.isMakanan,
       isRecommended: item.isRecommended ?? false,
       menuDescription: item.menuDescription ?? "",
-      order: item.order ?? 0,
+      sortOrder: item.sortOrder ?? 0,
       unitsPerPackage: item.unitsPerPackage ?? 1,
     });
     setModalOpen(true);
@@ -225,7 +234,7 @@ export default function AdminMenuPage() {
     } else {
       const currentItems = menuItems
         .filter(i => i.category === activeCategory)
-        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
       setTempItemsOrder([...currentItems]);
     }
     setRearrangeMode(mode);
@@ -263,7 +272,7 @@ export default function AdminMenuPage() {
         // Save Items Order
         const updates = tempItemsOrder.map((item, idx) => {
           return updateDoc(doc(db, ...MENU_COLLECTION_PATH as [string, string, string], item.id), {
-            order: idx + 1
+            sortOrder: idx + 1
           });
         });
         await Promise.all(updates);
@@ -301,7 +310,7 @@ export default function AdminMenuPage() {
     } else if (rearrangeMode === 'items') {
       const currentIds = menuItems
         .filter(i => i.category === activeCategory)
-        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
         .map(i => i.id);
       const tempIds = tempItemsOrder.map(i => i.id);
       return JSON.stringify(currentIds) !== JSON.stringify(tempIds);
@@ -436,10 +445,29 @@ export default function AdminMenuPage() {
                     </datalist>
                   </div>
                 </div>
-                <div className="field-row">
-                  <div className="field"><label>URL Gambar</label><input value={form.imagePath} onChange={e => setForm(f => ({ ...f, imagePath: e.target.value }))} /></div>
-                  <div className="field"><label>Isi/Pack (Take-away)</label><input type="number" onWheel={e => (e.target as HTMLInputElement).blur()} min="1" value={form.unitsPerPackage} onChange={e => setForm(f => ({ ...f, unitsPerPackage: Math.max(1, Number(e.target.value)) }))} /></div>
+                <div className="field">
+                  <label>Gambar Menu</label>
+                  <div className="img-upload-row">
+                    <div className="img-upload-preview" style={{ "--img-ratio": form.imageAspectRatio === "3:4" ? "3/4" : "1" } as React.CSSProperties}>
+                      <img
+                        src={form.imagePath || "/Logo Canteen 375 (2).png"}
+                        alt="Preview"
+                        onError={(e) => { (e.target as HTMLImageElement).src = "/Logo Canteen 375 (2).png"; }}
+                      />
+                    </div>
+                    <div className="img-upload-actions">
+                      <button type="button" className="img-upload-btn" onClick={() => setCropModalOpen(true)}>
+                        📷 {form.imagePath ? "Ganti Gambar" : "Upload Gambar"}
+                      </button>
+                      {form.imagePath && (
+                        <button type="button" className="img-remove-btn" onClick={() => setForm(f => ({ ...f, imagePath: "" }))}>
+                          Hapus
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
+                <div className="field"><label>Isi/Pack (Take-away)</label><input type="number" onWheel={e => (e.target as HTMLInputElement).blur()} min="1" value={form.unitsPerPackage} onChange={e => setForm(f => ({ ...f, unitsPerPackage: Math.max(1, Number(e.target.value)) }))} /></div>
                 <div className="field"><label>Deskripsi</label><textarea value={form.menuDescription} onChange={e => setForm(f => ({ ...f, menuDescription: e.target.value }))} rows={2} /></div>
                 <div className="toggle-row">
                   <div className="toggle-pill">
@@ -457,6 +485,17 @@ export default function AdminMenuPage() {
               </div>
             </div>
           </div>
+        )}
+
+        {cropModalOpen && (
+          <ImageCropModal
+            menuName={form.namaMenu}
+            onClose={() => setCropModalOpen(false)}
+            onSaved={(url, ratio) => {
+              setForm(f => ({ ...f, imagePath: url, imageAspectRatio: ratio }));
+              setCropModalOpen(false);
+            }}
+          />
         )}
 
         {/* Main Content Area */}
@@ -517,7 +556,7 @@ export default function AdminMenuPage() {
                   activeItems.map((item, idx) => (
                     <div key={item.id} className="menu-item-row">
                       <div className="item-details">
-                        <img src={item.imagePath || "/Logo Canteen 375 (2).png"} alt={item.namaMenu} className="item-image" onError={e => e.currentTarget.src = "/Logo Canteen 375 (2).png"} />
+                        <img src={item.imagePath || "/Logo Canteen 375 (2).png"} alt={item.namaMenu} className="item-image" style={{ aspectRatio: item.imageAspectRatio === "3:4" ? "3/4" : "1" }} onError={e => e.currentTarget.src = "/Logo Canteen 375 (2).png"} />
                         <div className="item-text">
                           <span className="item-title">{item.namaMenu} {item.isRecommended && "⭐"}</span>
                           <span className="item-price">{formatPrice(item.harga)}</span>
@@ -620,7 +659,7 @@ function AdminStyles() {
       .menu-item-row:hover { background: #fafafa; }
       
       .item-details { display: flex; gap: 1.2rem; flex: 1; }
-      .item-image { width: 80px; height: 80px; border-radius: 8px; object-fit: cover; background: #eee; border: 1px solid #eaeaea; }
+      .item-image { width: 80px; border-radius: 8px; object-fit: cover; background: #eee; border: 1px solid #eaeaea; }
       .item-text { display: flex; flex-direction: column; gap: 0.3rem; }
       .item-title { font-weight: 600; font-size: 0.95rem; color: #333; }
       .item-price { font-size: 0.9rem; color: #666; }
@@ -698,7 +737,16 @@ function AdminStyles() {
       .field input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
       .field input:focus, .field textarea:focus { border-color: #00b14f; outline: none; }
       .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-      
+
+      .img-upload-row { display: flex; align-items: center; gap: 1rem; }
+      .img-upload-preview { width: 72px; border-radius: 8px; overflow: hidden; border: 1px solid #e0e0e0; background: #f5f5f5; flex-shrink: 0; }
+      .img-upload-preview img { width: 100%; display: block; aspect-ratio: var(--img-ratio, 1); object-fit: cover; }
+      .img-upload-actions { display: flex; flex-direction: column; gap: 0.4rem; }
+      .img-upload-btn { background: #f0faf4; border: 1px solid #00b14f; color: #00b14f; padding: 0.45rem 1rem; border-radius: 6px; font-size: 0.8rem; font-weight: 600; cursor: pointer; }
+      .img-upload-btn:hover { background: #e0f5e8; }
+      .img-remove-btn { background: none; border: none; color: #d32f2f; font-size: 0.75rem; font-weight: 600; cursor: pointer; padding: 0; text-align: left; }
+      .img-remove-btn:hover { text-decoration: underline; }
+
       .toggle-row { display: flex; justify-content: space-between; align-items: center; margin-top: 0.5rem; }
       .toggle-pill { display: flex; background: #f0f0f0; padding: 3px; border-radius: 8px; }
       .pill-opt { border: none; padding: 0.5rem 1rem; border-radius: 6px; font-size: 0.8rem; cursor: pointer; font-weight: 600; color: #666; background: transparent; }
