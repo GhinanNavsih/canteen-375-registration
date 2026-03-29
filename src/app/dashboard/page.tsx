@@ -37,7 +37,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!sessionLoading && !member && !isAdmin) {
-      router.push("/leaderboard");
+      router.push("/about");
       return;
     }
 
