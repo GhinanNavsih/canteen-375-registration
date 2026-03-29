@@ -48,16 +48,23 @@ export interface BasketItem {
 }
 
 export interface SelfOrder {
-  userId: string;
+  canteenId: string;
+  customerNumber: number;
+  namaCustomer: string;
+  isMember: boolean;
+  customerPhone: string;
+  memberId: string;
   orderItems: {
     namaPesanan: string;
     dineInQuantity: number;
     takeAwayQuantity: number;
-    harga: number; // base price + options price
-    selectedOptions?: SelectedOption[];
+    harga: number;
+    isMakanan: boolean;
+    selectedOptions: SelectedOption[];
   }[];
+  status: "Serving" | "Done" | "Cancelled";
   total: number;
-  status: "Unpaid" | "Paid" | "Cancelled";
-  shortCode: string;
-  timestamp: any;
+  transactionMethod: string;
+  waktuPengambilan: string;
+  waktuPesan: any;
 }

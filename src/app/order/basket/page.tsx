@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { collection, doc, setDoc, serverTimestamp, getDocs } from "firebase/firestore";
+import { collection, doc, addDoc, serverTimestamp, getDocs, getDoc, runTransaction } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useMember } from "@/context/MemberContext";
 import { useBasket } from "@/context/BasketContext";
@@ -14,7 +14,7 @@ export default function BasketPage() {
   const { basket, totalPrice, totalItems, addToBasket, editBasketItem, updateQuantity, removeFromBasket, clearBasket } = useBasket();
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
-  const [orderSuccess, setOrderSuccess] = useState<{ shortCode: string } | null>(null);
+  const [orderSuccess, setOrderSuccess] = useState<{ customerNumber: number } | null>(null);
 
   // Cross-selling state
   const [crossSellItems, setCrossSellItems] = useState<MenuItem[]>([]);
@@ -42,14 +42,30 @@ export default function BasketPage() {
     // 1. Fetch recommended items for "People also ordered"
     const fetchCrossSellAndOG = async () => {
       try {
-        const [menuSnap, ogSnap] = await Promise.all([
+        const [menuSnap, ogSnap, configSnap] = await Promise.all([
           getDocs(collection(db, "Canteens", "canteen375", "MenuCollection")),
-          getDocs(collection(db, "Canteens", "canteen375", "OptionGroups"))
+          getDocs(collection(db, "Canteens", "canteen375", "OptionGroups")),
+          getDoc(doc(db, "Canteens", "canteen375", "Metadata", "MenuConfig"))
         ]);
+
+        let recOrder: string[] = [];
+        let recLimit = 5;
+        if (configSnap.exists()) {
+          const configData = configSnap.data();
+          recOrder = configData.recommendedOrder || [];
+          recLimit = configData.recommendedLimit ?? 6;
+        }
 
         const items = menuSnap.docs.map(d => ({ ...d.data(), id: d.id } as MenuItem));
         const inBasketIds = new Set(basket.map(b => b.menuItem.id));
-        const suggestions = items.filter(i => i.isRecommended && !inBasketIds.has(i.id)).slice(0, 5);
+        const suggestions = items
+          .filter(i => i.isRecommended && !inBasketIds.has(i.id))
+          .sort((a, b) => {
+            const idxA = recOrder.indexOf(a.id);
+            const idxB = recOrder.indexOf(b.id);
+            return (idxA === -1 ? Infinity : idxA) - (idxB === -1 ? Infinity : idxB);
+          })
+          .slice(0, recLimit);
         setCrossSellItems(suggestions);
 
         // 2. Fetch option groups and normalize
@@ -76,42 +92,49 @@ export default function BasketPage() {
     fetchCrossSellAndOG();
   }, [basket]);
 
-  const generateShortCode = () => {
-    const num = Math.floor(1000 + Math.random() * 9000);
-    return `#${num}`;
-  };
-
   const handleOrder = async () => {
     if (!member || totalItems === 0) return;
     setSubmitting(true);
 
     try {
-      const shortCode = generateShortCode();
+      // Atomically increment the customer number counter
+      const counterRef = doc(db, "Canteens", "canteen375", "Metadata", "SelfOrderCounter");
+      const customerNumber = await runTransaction(db, async (transaction) => {
+        const counterSnap = await transaction.get(counterRef);
+        const current = counterSnap.exists() ? counterSnap.data().current : 0;
+        const next = current + 1;
+        transaction.set(counterRef, { current: next });
+        return next;
+      });
+
       const orderItems = basket
         .filter(b => (b.dineInQuantity + b.takeAwayQuantity) > 0)
         .map((b) => ({
           namaPesanan: b.menuItem.namaMenu,
           harga: b.menuItem.harga + b.selectedOptions.reduce((acc, o) => acc + o.priceAdjustment, 0),
+          isMakanan: b.menuItem.isMakanan,
           dineInQuantity: b.dineInQuantity,
           takeAwayQuantity: b.takeAwayQuantity,
           selectedOptions: b.selectedOptions,
         }));
 
-      const orderId = `SO_${shortCode.replace("#", "")}`;
-      await setDoc(doc(db, "Canteens", "canteen375", "SelfOrders", orderId), {
-        userId: member.uid || member.id,
-        memberName: member.fullName,
+      await addDoc(collection(db, "Canteens", "canteen375", "SelfOrders"), {
+        canteenId: "canteen375_plazaUnipdu",
+        customerNumber,
+        namaCustomer: member.fullName,
+        isMember: true,
+        customerPhone: member.phoneNumber || "",
+        memberId: member.uid || member.id,
         orderItems,
-        subtotal: totalPrice,
-        takeAwayFee,
+        status: "Serving",
         total: totalPrice + takeAwayFee,
-        status: "Unpaid",
-        shortCode,
-        timestamp: serverTimestamp(),
+        transactionMethod: "Self Order",
+        waktuPengambilan: "Tidak Memesan",
+        waktuPesan: serverTimestamp(),
       });
 
       clearBasket();
-      setOrderSuccess({ shortCode });
+      setOrderSuccess({ customerNumber });
     } catch (err) {
       console.error("Error placing order:", err);
     } finally {
@@ -208,8 +231,8 @@ export default function BasketPage() {
           <div className="success-card">
             <div className="success-icon">✅</div>
             <h2>Pesanan Masuk!</h2>
-            <p>Tunjukkan kode ini ke kasir:</p>
-            <div className="short-code">{orderSuccess.shortCode}</div>
+            <p>Nomor antrian kamu:</p>
+            <div className="short-code">{orderSuccess.customerNumber}</div>
             <p className="success-sub">Kasir akan menyiapkan pesananmu segera.</p>
             <button className="btn-back" onClick={() => router.push("/order")}>
               Pesan Lagi

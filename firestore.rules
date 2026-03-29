@@ -100,9 +100,10 @@ service cloud.firestore {
 
     // ── Canteens / Metadata ───────────────────────────────────────────────────
     // Admin can manage config (like category order). Members can read it.
+    // Authenticated members can also write to SelfOrderCounter for order numbering.
     match /Canteens/{canteenId}/Metadata/{configId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin();
+      allow write: if isAdmin() || (isAuthenticated() && configId == 'SelfOrderCounter');
     }
 
     // ── Canteens / OptionGroups ───────────────────────────────────────────────
@@ -115,9 +116,9 @@ service cloud.firestore {
     // ── SelfOrders collection ─────────────────────────────────────────────────
     match /SelfOrders/{orderId} {
       // Members can create their own orders and read their own.
-      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
-      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
-      // Only admins/POS can update status (Unpaid → Paid).
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.memberId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.memberId == request.auth.uid;
+      // Only admins/POS can update status.
       allow update, delete: if isAdmin();
     }
   }
