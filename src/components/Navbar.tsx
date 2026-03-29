@@ -29,30 +29,28 @@ export default function Navbar() {
           )}
 
           {/* ── Member links ── */}
-          {!isAdmin && (
+          {!isAdmin && member && (
             <>
-              {member && (
-                <Link href="/about" className={`nav-link ${isActive("/about") ? "active" : ""}`}>
-                  About
-                </Link>
-              )}
               <Link href="/dashboard" className={`nav-link ${isActive("/dashboard") ? "active" : ""}`}>
                 Dashboard
               </Link>
-              {member && (
-                <Link href="/order" className={`nav-link ${isActive("/order") ? "active" : ""}`}>
-                  🛒 Order
-                </Link>
-              )}
-              {member && (
-                <Link href="/leaderboard" className={`nav-link ${isActive("/leaderboard") ? "active" : ""}`}>
-                  Leaderboard
-                </Link>
-              )}
+              <Link href="/order" className={`nav-link ${isActive("/order") ? "active" : ""}`}>
+                🛒 Order
+              </Link>
+              <Link href="/leaderboard" className={`nav-link ${isActive("/leaderboard") ? "active" : ""}`}>
+                Leaderboard
+              </Link>
               <Link href="/vouchers" className={`nav-link ${isActive("/vouchers") ? "active" : ""}`}>
                 Vouchers
               </Link>
             </>
+          )}
+
+          {/* ── Public links (for non-logged-in users) ── */}
+          {!isAdmin && !member && (
+            <Link href="/about" className={`nav-link ${isActive("/about") ? "active" : ""}`}>
+                About
+            </Link>
           )}
         </div>
 
