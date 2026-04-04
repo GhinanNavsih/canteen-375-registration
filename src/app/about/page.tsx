@@ -130,6 +130,18 @@ export default function AboutPage() {
             </div>
           </div>
 
+          {/* Campaign 4: Self Order */}
+          <div className="about-card">
+            <div className="about-card-header">
+              <span>📱</span>
+              <h2>Pesan Lewat Applikasi Ini!</h2>
+            </div>
+
+            <p className="about-section-desc">
+              Pesan makanan dan minuman langsung dari aplikasi kami dengan mudah! Pilih menu favorit, tambahkan ke keranjang, dan ajukan pesanan. Kasir akan menyiapkan pesananmu dengan cepat.
+            </p>
+          </div>
+
           {/* Action Buttons */}
           <div className="about-actions-card">
             <Link href="/leaderboard" className="btn-primary-red">

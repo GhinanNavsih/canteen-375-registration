@@ -32,16 +32,16 @@ export default function Navbar() {
           {!isAdmin && member && (
             <>
               <Link href="/dashboard" className={`nav-link ${isActive("/dashboard") ? "active" : ""}`}>
-                Dashboard
+                Dasboard
               </Link>
               <Link href="/order" className={`nav-link ${isActive("/order") ? "active" : ""}`}>
-                🛒 Order
+                🛒 Pesanan
               </Link>
               <Link href="/leaderboard" className={`nav-link ${isActive("/leaderboard") ? "active" : ""}`}>
-                Leaderboard
+                Papan Peringkat
               </Link>
               <Link href="/vouchers" className={`nav-link ${isActive("/vouchers") ? "active" : ""}`}>
-                Vouchers
+                Voucher
               </Link>
             </>
           )}
@@ -49,7 +49,7 @@ export default function Navbar() {
           {/* ── Public links (for non-logged-in users) ── */}
           {!isAdmin && !member && (
             <Link href="/about" className={`nav-link ${isActive("/about") ? "active" : ""}`}>
-                About
+                Tentang
             </Link>
           )}
         </div>

@@ -51,9 +51,13 @@ export default function AdminMenuPage() {
 
   // Drawer state
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [rearrangeMode, setRearrangeMode] = useState<'categories' | 'items' | null>(null);
+  const [rearrangeMode, setRearrangeMode] = useState<'categories' | 'items' | 'recommended' | null>(null);
   const [tempCategoryOrder, setTempCategoryOrder] = useState<string[]>([]);
   const [tempItemsOrder, setTempItemsOrder] = useState<MenuItem[]>([]);
+  const [recommendedOrder, setRecommendedOrder] = useState<string[]>([]);
+  const [recommendedLimit, setRecommendedLimit] = useState<number>(6);
+  const [tempRecommendedOrder, setTempRecommendedOrder] = useState<MenuItem[]>([]);
+  const [tempRecommendedLimit, setTempRecommendedLimit] = useState<number>(6);
 
   // Modal state
   const [modalOpen, setModalOpen] = useState(false);
@@ -108,10 +112,13 @@ export default function AdminMenuPage() {
         .filter((c): c is string => typeof c === 'string' && c.trim() !== '');
 
       if (configSnap.exists()) {
-        const storedOrder = configSnap.data().categoryOrder || [];
+        const configData = configSnap.data();
+        const storedOrder = configData.categoryOrder || [];
         sortedCategories = storedOrder.filter((c: string) => distinctCats.includes(c));
         const newCats = distinctCats.filter(c => !sortedCategories.includes(c));
         sortedCategories = [...sortedCategories, ...newCats];
+        setRecommendedOrder(configData.recommendedOrder || []);
+        setRecommendedLimit(configData.recommendedLimit ?? 6);
       } else {
         sortedCategories = distinctCats.sort();
       }
@@ -228,9 +235,19 @@ export default function AdminMenuPage() {
 
   // ── REORDERING LOGIC ──
 
-  const openRearrangeDrawer = (mode: 'categories' | 'items') => {
+  const openRearrangeDrawer = (mode: 'categories' | 'items' | 'recommended') => {
     if (mode === 'categories') {
       setTempCategoryOrder([...categoryOrder]);
+    } else if (mode === 'recommended') {
+      const recItems = menuItems
+        .filter(i => i.isRecommended)
+        .sort((a, b) => {
+          const idxA = recommendedOrder.indexOf(a.id);
+          const idxB = recommendedOrder.indexOf(b.id);
+          return (idxA === -1 ? Infinity : idxA) - (idxB === -1 ? Infinity : idxB);
+        });
+      setTempRecommendedOrder([...recItems]);
+      setTempRecommendedLimit(recommendedLimit);
     } else {
       const currentItems = menuItems
         .filter(i => i.category === activeCategory)
@@ -251,6 +268,11 @@ export default function AdminMenuPage() {
       if (swapIndex < 0 || swapIndex >= newOrder.length) return;
       [newOrder[index], newOrder[swapIndex]] = [newOrder[swapIndex], newOrder[index]];
       setTempCategoryOrder(newOrder);
+    } else if (rearrangeMode === 'recommended') {
+      const newItems = [...tempRecommendedOrder];
+      if (swapIndex < 0 || swapIndex >= newItems.length) return;
+      [newItems[index], newItems[swapIndex]] = [newItems[swapIndex], newItems[index]];
+      setTempRecommendedOrder(newItems);
     } else if (rearrangeMode === 'items') {
       const newItems = [...tempItemsOrder];
       if (swapIndex < 0 || swapIndex >= newItems.length) return;
@@ -268,6 +290,13 @@ export default function AdminMenuPage() {
         const configRef = doc(db, ...CONFIG_DOC_PATH as [string, string, string, string]);
         await setDoc(configRef, { categoryOrder: cleanOrder }, { merge: true });
         showToast("Urutan kategori berhasil disimpan", "success");
+      } else if (rearrangeMode === 'recommended') {
+        const newOrder = tempRecommendedOrder.map(item => item.id);
+        setRecommendedOrder(newOrder);
+        setRecommendedLimit(tempRecommendedLimit);
+        const configRef = doc(db, ...CONFIG_DOC_PATH as [string, string, string, string]);
+        await setDoc(configRef, { recommendedOrder: newOrder, recommendedLimit: tempRecommendedLimit }, { merge: true });
+        showToast("Urutan rekomendasi berhasil disimpan", "success");
       } else {
         // Save Items Order
         const updates = tempItemsOrder.map((item, idx) => {
@@ -307,6 +336,17 @@ export default function AdminMenuPage() {
   const hasOrderChanged = useMemo(() => {
     if (rearrangeMode === 'categories') {
       return JSON.stringify(tempCategoryOrder) !== JSON.stringify(categoryOrder);
+    } else if (rearrangeMode === 'recommended') {
+      const currentIds = menuItems
+        .filter(i => i.isRecommended)
+        .sort((a, b) => {
+          const idxA = recommendedOrder.indexOf(a.id);
+          const idxB = recommendedOrder.indexOf(b.id);
+          return (idxA === -1 ? Infinity : idxA) - (idxB === -1 ? Infinity : idxB);
+        })
+        .map(i => i.id);
+      const tempIds = tempRecommendedOrder.map(i => i.id);
+      return JSON.stringify(currentIds) !== JSON.stringify(tempIds) || tempRecommendedLimit !== recommendedLimit;
     } else if (rearrangeMode === 'items') {
       const currentIds = menuItems
         .filter(i => i.category === activeCategory)
@@ -316,7 +356,7 @@ export default function AdminMenuPage() {
       return JSON.stringify(currentIds) !== JSON.stringify(tempIds);
     }
     return false;
-  }, [rearrangeMode, tempCategoryOrder, categoryOrder, tempItemsOrder, menuItems, activeCategory]);
+  }, [rearrangeMode, tempCategoryOrder, categoryOrder, tempItemsOrder, tempRecommendedOrder, recommendedOrder, tempRecommendedLimit, recommendedLimit, menuItems, activeCategory]);
 
   if (sessionLoading || loadingMenu) {
     return (
@@ -357,15 +397,31 @@ export default function AdminMenuPage() {
         {/* Universal Rearrange Drawer */}
         <div className={`drawer ${drawerOpen ? 'open' : ''}`}>
           <div className="drawer-header">
-            <h2>{rearrangeMode === 'categories' ? 'Atur Urutan Kategori' : `Atur Urutan: ${activeCategory}`}</h2>
+            <h2>{rearrangeMode === 'categories' ? 'Atur Urutan Kategori' : rearrangeMode === 'recommended' ? 'Atur Urutan Rekomendasi' : `Atur Urutan: ${activeCategory}`}</h2>
             <button className="close-drawer" onClick={() => setDrawerOpen(false)}>✕</button>
           </div>
           <div className="drawer-body">
             <p className="drawer-desc">
               {rearrangeMode === 'categories'
                 ? 'Geser naik atau turun untuk mengubah urutan kategori yang akan ditampilkan ke pelanggan.'
+                : rearrangeMode === 'recommended'
+                ? 'Atur urutan item rekomendasi yang ditampilkan ke pelanggan.'
                 : 'Atur urutan item dalam kategori ini agar mempermudah pelanggan dalam memilih.'}
             </p>
+            {rearrangeMode === 'recommended' && (
+              <div className="rec-limit-row">
+                <label>Jumlah ditampilkan:</label>
+                <input
+                  type="number"
+                  min="1"
+                  max={tempRecommendedOrder.length || 20}
+                  value={tempRecommendedLimit}
+                  onChange={e => setTempRecommendedLimit(Math.max(1, Number(e.target.value)))}
+                  onWheel={e => (e.target as HTMLInputElement).blur()}
+                  className="rec-limit-input"
+                />
+              </div>
+            )}
             <div className="drawer-list">
               {rearrangeMode === 'categories' ? (
                 tempCategoryOrder.map((cat, idx) => (
@@ -377,6 +433,22 @@ export default function AdminMenuPage() {
                     <div className="drawer-item-actions">
                       <button onClick={() => moveTemp(idx, 'up')} disabled={idx === 0}>▲</button>
                       <button onClick={() => moveTemp(idx, 'down')} disabled={idx === tempCategoryOrder.length - 1}>▼</button>
+                    </div>
+                  </div>
+                ))
+              ) : rearrangeMode === 'recommended' ? (
+                tempRecommendedOrder.map((item, idx) => (
+                  <div key={item.id} className={`drawer-item ${idx >= tempRecommendedLimit ? 'dimmed' : ''}`}>
+                    <div className="drawer-item-title">
+                      <span className="drag-icon">☰</span>
+                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <span style={{ fontWeight: 600 }}>{item.namaMenu}</span>
+                        <span style={{ fontSize: '0.75rem', color: '#888' }}>{formatPrice(item.harga)} · {item.category}</span>
+                      </div>
+                    </div>
+                    <div className="drawer-item-actions">
+                      <button onClick={() => moveTemp(idx, 'up')} disabled={idx === 0}>▲</button>
+                      <button onClick={() => moveTemp(idx, 'down')} disabled={idx === tempRecommendedOrder.length - 1}>▼</button>
                     </div>
                   </div>
                 ))
@@ -514,6 +586,7 @@ export default function AdminMenuPage() {
                   {catMenuOpen && (
                     <div className="dropdown-menu">
                       <button onClick={() => openRearrangeDrawer('categories')}>Rearrange Categories</button>
+                      <button onClick={() => openRearrangeDrawer('recommended')}>Rearrange Recommended</button>
                     </div>
                   )}
                 </div>
@@ -718,6 +791,13 @@ function AdminStyles() {
       .drawer-footer .btn-cancel { flex: 1; background: white; border: 1px solid #ccc; padding: 0.8rem; border-radius: 8px; font-weight: 600; cursor: pointer; color: #333; }
       .drawer-footer .btn-save { flex: 2; background: #00b14f; color: white; border: none; padding: 0.8rem; border-radius: 8px; font-weight: 600; cursor: pointer; }
       .drawer-footer .btn-save:disabled { background: #a5d6a7; cursor: not-allowed; }
+
+      .rec-limit-row { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem; padding: 0.75rem; background: #f9f9f9; border-radius: 8px; border: 1px solid #e0e0e0; }
+      .rec-limit-row label { font-size: 0.9rem; font-weight: 600; color: #333; white-space: nowrap; }
+      .rec-limit-input { width: 60px; padding: 0.4rem 0.5rem; border: 1px solid #ddd; border-radius: 6px; font-family: inherit; font-size: 0.9rem; text-align: center; -moz-appearance: textfield; appearance: textfield; }
+      .rec-limit-input::-webkit-outer-spin-button, .rec-limit-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+      .rec-limit-input:focus { border-color: #00b14f; outline: none; }
+      .drawer-item.dimmed { opacity: 0.4; }
 
 
       /* Modals */

@@ -43,3 +43,6 @@ next-env.d.ts
 # firebase
 functions/point-of-sales-app-*.json
 service-account.json
+
+# Firebase service account key
+serviceAccountKey.json

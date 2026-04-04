@@ -10,7 +10,7 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      // Recognizes specific emails or the admin custom claim
+      // UPDATED: Now recognizes your specific email as an Admin
       return isAuthenticated() && (
         request.auth.token.admin == true || 
         request.auth.token.email == "gnavsih1@gmail.com" || 
@@ -38,7 +38,9 @@ service cloud.firestore {
     match /DailyTransaction/{id} { allow read, write: if isAuthenticated(); }
     match /MonthlyTransaction/{id} { allow read, write: if isAuthenticated(); }
     match /YearlyTransaction/{id} { allow read, write: if isAuthenticated(); }
-    match /Status/{id} { allow read, write: if isAuthenticated(); }
+    match /Status/{id} { allow read, write, delete, update: if true; }
+    match /RecentlyServed/{id} { allow read, write, delete, update: if true; }
+
 
     // ── MEMBERS COLLECTION ─────────────────────────────────────────────────────
     match /Members/{uid} {
@@ -103,7 +105,7 @@ service cloud.firestore {
       
       match /Metadata/{configId} {
         allow read: if isAuthenticated();
-        allow write: if isAdmin();
+        allow write: if isAdmin() || (isAuthenticated() && configId == 'SelfOrderCounter');
       }
       
       match /Metadata/Settings {
@@ -127,35 +129,36 @@ service cloud.firestore {
       
       // STATUS & RECENTLY SERVED: Order queue and completed orders
       match /Status/{orderId} {
-        allow read, write: if isAuthenticated();
+        allow read, write, update, delete: if true;
       }
       
       match /RecentlyServed/{orderId} {
-        allow read, write: if isAuthenticated();
+        allow read, write, update, delete: if true;
       }
       
       match /SelfOrders/{orderId} {
-        allow create: if isAdmin() || (isAuthenticated() && request.resource.data.userId == request.auth.uid);
-        allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+        allow read: if isAdmin() || (isAuthenticated() && resource.data.memberId == request.auth.uid);
+        allow create: if isAuthenticated() && request.resource.data.memberId == request.auth.uid;
+        // Only admins/POS can update status.
         allow update, delete: if isAdmin();
       }
       
       match /OpenBills/{memberId} {
         // Broad access for all authenticated POS users to read and write to standard bills
-        allow read, write: if isAuthenticated();
+        allow read, write, update, delete: if isAuthenticated();
         
         // Explicitly allow writing to the nested subcollection where individual tab entries live
         match /Orders/{tabOrderId} {
-          allow read, write: if isAuthenticated();
+          allow read, write, update, delete: if isAuthenticated();
         }
       }
       
       match /SettledBills/{billId} {
-      	allow read, write: if isAuthenticated();
+      	allow read, write, update, delete: if isAuthenticated();
       }
       
       match /Orders/{orderID} {
-      	allow read, write: if isAuthenticated();
+      	allow read, write, update, delete: if isAuthenticated();
       }
       
     }

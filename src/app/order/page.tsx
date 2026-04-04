@@ -17,6 +17,8 @@ export default function OrderPage() {
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [optionGroups, setOptionGroups] = useState<OptionGroup[]>([]);
   const [categoryOrder, setCategoryOrder] = useState<string[]>([]);
+  const [recommendedOrder, setRecommendedOrder] = useState<string[]>([]);
+  const [recommendedLimit, setRecommendedLimit] = useState<number>(6);
   const [loadingMenu, setLoadingMenu] = useState(true);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [addedItems, setAddedItems] = useState<Set<string>>(new Set());
@@ -48,10 +50,13 @@ export default function OrderPage() {
         const distinctCats = Array.from(new Set(items.map(i => i.category)));
 
         if (configSnap.exists()) {
-          const stored = configSnap.data().categoryOrder || [];
+          const configData = configSnap.data();
+          const stored = configData.categoryOrder || [];
           sortedCats = stored.filter((c: string) => distinctCats.includes(c));
           const missing = distinctCats.filter(c => !sortedCats.includes(c));
           sortedCats = [...sortedCats, ...missing];
+          setRecommendedOrder(configData.recommendedOrder || []);
+          setRecommendedLimit(configData.recommendedLimit ?? 6);
         } else {
           sortedCats = distinctCats.sort();
         }
@@ -99,12 +104,16 @@ export default function OrderPage() {
 
   // Recommended logic: Respects manual recommended field first
   const recommended = useMemo(() => {
-    const manual = menuItems.filter((i) => i.isRecommended);
+    const manual = menuItems.filter((i) => i.isRecommended).sort((a, b) => {
+      const idxA = recommendedOrder.indexOf(a.id);
+      const idxB = recommendedOrder.indexOf(b.id);
+      return (idxA === -1 ? Infinity : idxA) - (idxB === -1 ? Infinity : idxB);
+    });
     const others = menuItems.filter((i) => !i.isRecommended);
     const food = others.filter((i) => i.isMakanan);
     const drink = others.filter((i) => !i.isMakanan);
-    return [...manual, ...food, ...drink].slice(0, 6);
-  }, [menuItems]);
+    return [...manual, ...food, ...drink].slice(0, recommendedLimit);
+  }, [menuItems, recommendedOrder, recommendedLimit]);
 
   // Group remaining items by manual category order
   const categorisedGroups = useMemo(() => {

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Image from "next/image";
 import { useSearchParams, useRouter } from "next/navigation";
-import { signInWithEmailAndPassword } from "firebase/auth";
+import { signInWithEmailAndPassword, getAuth } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 
 export default function LoginForm() {
@@ -22,10 +22,27 @@ export default function LoginForm() {
         setError("");
 
         try {
+            console.log("[LOGIN] Starting login for email:", email);
+
             // Firebase Auth handles credential verification — no manual Firestore read needed.
-            await signInWithEmailAndPassword(auth, email, password);
-            // onAuthStateChanged in MemberContext will automatically update the session.
-            router.push(redirect);
+            const userCred = await signInWithEmailAndPassword(auth, email, password);
+            console.log("[LOGIN] Sign-in successful. User UID:", userCred.user.uid);
+            console.log("[LOGIN] User email:", userCred.user.email);
+
+            // Check if admin to redirect appropriately
+            console.log("[LOGIN] Fetching ID token result...");
+            const tokenResult = await userCred.user.getIdTokenResult(false);
+            console.log("[LOGIN] Token result obtained");
+            console.log("[LOGIN] All claims:", tokenResult.claims);
+            console.log("[LOGIN] Admin claim value:", tokenResult.claims.admin);
+
+            const isAdminUser = tokenResult.claims.admin === true;
+            console.log("[LOGIN] Is admin user?", isAdminUser);
+
+            // Redirect to /admin/menu for admins, otherwise use the passed redirect or default to /dashboard
+            const redirectPath = isAdminUser ? "/admin/menu" : redirect;
+            console.log("[LOGIN] Redirecting to:", redirectPath);
+            router.push(redirectPath);
         } catch (err: any) {
             console.error(err);
             const code = err.code as string;

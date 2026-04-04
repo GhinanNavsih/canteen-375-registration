@@ -5,14 +5,15 @@ import { useRouter } from "next/navigation";
 import { collection, getDocs, doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useMember } from "@/context/MemberContext";
-import { MenuItem, OptionGroup } from "@/types/menu";
+import { MenuItem } from "@/types/menu";
 
 export default function MenuDisplayPage() {
   const { member, isAdmin, loading: sessionLoading } = useMember();
   const router = useRouter();
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
-  const [optionGroups, setOptionGroups] = useState<OptionGroup[]>([]);
   const [categoryOrder, setCategoryOrder] = useState<string[]>([]);
+  const [recommendedOrder, setRecommendedOrder] = useState<string[]>([]);
+  const [recommendedLimit, setRecommendedLimit] = useState<number>(6);
   const [loading, setLoading] = useState(true);
 
   // Redirect if not authenticated
@@ -43,10 +44,13 @@ export default function MenuDisplayPage() {
         let sortedCats: string[] = [];
         const distinctCats = Array.from(new Set(items.map((i) => i.category)));
         if (configSnap.exists()) {
-          const stored = configSnap.data().categoryOrder || [];
+          const configData = configSnap.data();
+          const stored = configData.categoryOrder || [];
           sortedCats = stored.filter((c: string) => distinctCats.includes(c));
           const missing = distinctCats.filter((c) => !sortedCats.includes(c));
           sortedCats = [...sortedCats, ...missing];
+          setRecommendedOrder(configData.recommendedOrder || []);
+          setRecommendedLimit(configData.recommendedLimit ?? 6);
         } else {
           sortedCats = distinctCats.sort();
         }
@@ -58,23 +62,6 @@ export default function MenuDisplayPage() {
           })
         );
         setCategoryOrder(sortedCats);
-
-        const ogSnap = await getDocs(collection(db, "Canteens", "canteen375", "OptionGroups"));
-        setOptionGroups(
-          ogSnap.docs.map((d) => {
-            const data = d.data();
-            return {
-              ...data,
-              id: d.id,
-              options: data.options || [],
-              linkedItemIds: data.linkedItemIds || [],
-              linkedMenuItems: data.linkedMenuItems || [],
-              selectionRule: data.selectionRule || "optional",
-              ruleType: data.ruleType || "exactly",
-              ruleCount: data.ruleCount || 1,
-            } as OptionGroup;
-          })
-        );
       } catch (err) {
         console.error("Error fetching menu:", err);
       } finally {
@@ -85,12 +72,16 @@ export default function MenuDisplayPage() {
   }, [member, isAdmin, sessionLoading]);
 
   const recommended = useMemo(() => {
-    const manual = menuItems.filter((i) => i.isRecommended);
+    const manual = menuItems.filter((i) => i.isRecommended).sort((a, b) => {
+      const idxA = recommendedOrder.indexOf(a.id);
+      const idxB = recommendedOrder.indexOf(b.id);
+      return (idxA === -1 ? Infinity : idxA) - (idxB === -1 ? Infinity : idxB);
+    });
     const others = menuItems.filter((i) => !i.isRecommended);
     const food = others.filter((i) => i.isMakanan);
     const drink = others.filter((i) => !i.isMakanan);
-    return [...manual, ...food, ...drink].slice(0, 6);
-  }, [menuItems]);
+    return [...manual, ...food, ...drink].slice(0, recommendedLimit);
+  }, [menuItems, recommendedOrder, recommendedLimit]);
 
   const categorisedGroups = useMemo(() => {
     const groups: { category: string; items: MenuItem[] }[] = [];
@@ -100,12 +91,6 @@ export default function MenuDisplayPage() {
     });
     return groups;
   }, [menuItems, categoryOrder]);
-
-  const hasOptions = (item: MenuItem) => {
-    return optionGroups.some(
-      (g) => g.linkedItemIds.includes(item.id) || (g.linkedMenuItems || []).includes(item.namaMenu)
-    );
-  };
 
   const formatPrice = (price: number) => `Rp${(price || 0).toLocaleString("id-ID")}`;
 
@@ -160,7 +145,6 @@ export default function MenuDisplayPage() {
             (e.target as HTMLImageElement).src = "/Logo Canteen 375 (2).png";
           }}
         />
-        {hasOptions(item) && <span className="mdl-badge">Bisa Custom</span>}
       </div>
       <div className="mdl-card-body">
         <div className="mdl-card-header">
@@ -192,30 +176,38 @@ export default function MenuDisplayPage() {
 
         /* ── Header ── */
         .mdl-header {
-          text-align: center;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 1.5rem;
           margin-bottom: 2.5rem;
           padding: 1rem 0;
         }
         .mdl-logo {
-          width: 72px;
-          height: 72px;
+          width: 100px;
+          height: 100px;
           border-radius: 50%;
           object-fit: cover;
-          margin: 0 auto 0.75rem;
-          display: block;
+          flex-shrink: 0;
           border: 3px solid #ece8e3;
           box-shadow: 0 4px 16px rgba(0,0,0,0.06);
         }
+        .mdl-header-text {
+          display: flex;
+          flex-direction: column;
+          gap: 0.2rem;
+          align-items: center;
+        }
         .mdl-title {
           font-family: 'Playfair Display', serif;
-          font-size: 1.75rem;
+          font-size: 2rem;
           font-weight: 900;
           color: #2d241d;
-          margin: 0 0 0.2rem;
+          margin: 0;
           letter-spacing: -0.02em;
         }
         .mdl-subtitle {
-          font-size: 0.8rem;
+          font-size: 1rem;
           color: #8d6e63;
           font-weight: 600;
           margin: 0;
@@ -377,8 +369,10 @@ export default function MenuDisplayPage() {
         {/* ── Header ── */}
         <header className="mdl-header">
           <img src="/Logo Canteen 375 (2).png" alt="Canteen 375" className="mdl-logo" />
-          <h1 className="mdl-title">Canteen 375</h1>
-          <p className="mdl-subtitle">Menu Kami</p>
+          <div className="mdl-header-text">
+            <h1 className="mdl-title">Canteen 375</h1>
+            <p className="mdl-subtitle">Menu Kami</p>
+          </div>
         </header>
 
         {/* ── Recommended ── */}
