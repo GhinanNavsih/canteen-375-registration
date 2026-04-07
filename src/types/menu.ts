@@ -10,6 +10,7 @@ export interface MenuItem {
   menuDescription?: string;
   sortOrder?: number;
   unitsPerPackage?: number;
+  showMenu?: boolean;
 }
 
 export interface OptionItem {

@@ -30,6 +30,7 @@ const emptyForm = (nextOrder: number, defaultCategory: string): Omit<MenuItem, "
     menuDescription: "",
     sortOrder: nextOrder,
     unitsPerPackage: 1,
+    showMenu: true,
   };
 };
 
@@ -175,6 +176,7 @@ export default function AdminMenuPage() {
       menuDescription: item.menuDescription ?? "",
       sortOrder: item.sortOrder ?? 0,
       unitsPerPackage: item.unitsPerPackage ?? 1,
+      showMenu: item.showMenu ?? true,
     });
     setModalOpen(true);
   };
@@ -550,6 +552,15 @@ export default function AdminMenuPage() {
                     {form.isRecommended ? "⭐ Rekomendasi" : "☆ Biasa"}
                   </button>
                 </div>
+                <div className="toggle-row">
+                  <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#555' }}>Tampilkan di Menu Display</label>
+                  <button
+                    className={`show-menu-btn ${form.showMenu !== false ? "visible" : ""}`}
+                    onClick={() => setForm(f => ({ ...f, showMenu: !f.showMenu }))}
+                  >
+                    {form.showMenu !== false ? "👁️ Ditampilkan" : "🚫 Disembunyikan"}
+                  </button>
+                </div>
               </div>
               <div className="modal-footer">
                 <button className="btn-cancel" onClick={() => setModalOpen(false)}>Batal</button>
@@ -631,7 +642,10 @@ export default function AdminMenuPage() {
                       <div className="item-details">
                         <img src={item.imagePath || "/Logo Canteen 375 (2).png"} alt={item.namaMenu} className="item-image" style={{ aspectRatio: item.imageAspectRatio === "3:4" ? "3/4" : "1" }} onError={e => e.currentTarget.src = "/Logo Canteen 375 (2).png"} />
                         <div className="item-text">
-                          <span className="item-title">{item.namaMenu} {item.isRecommended && "⭐"}</span>
+                          <span className="item-title">
+                            {item.namaMenu} {item.isRecommended && "⭐"}
+                            {item.showMenu === false && <span className="hidden-badge">Disembunyikan</span>}
+                          </span>
                           <span className="item-price">{formatPrice(item.harga)}</span>
                           {item.menuDescription && <span className="item-desc">{item.menuDescription}</span>}
                         </div>
@@ -734,7 +748,8 @@ function AdminStyles() {
       .item-details { display: flex; gap: 1.2rem; flex: 1; }
       .item-image { width: 80px; border-radius: 8px; object-fit: cover; background: #eee; border: 1px solid #eaeaea; }
       .item-text { display: flex; flex-direction: column; gap: 0.3rem; }
-      .item-title { font-weight: 600; font-size: 0.95rem; color: #333; }
+      .item-title { font-weight: 600; font-size: 0.95rem; color: #333; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+      .hidden-badge { font-size: 0.65rem; font-weight: 700; color: #d32f2f; background: #ffebee; padding: 0.15rem 0.5rem; border-radius: 4px; }
       .item-price { font-size: 0.9rem; color: #666; }
       .item-desc { font-size: 0.8rem; color: #888; margin-top: 0.2rem; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
@@ -834,6 +849,9 @@ function AdminStyles() {
       
       .star-btn { padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid #ddd; background: white; font-weight: 600; font-size: 0.8rem; cursor: pointer; color: #555; }
       .star-btn.starred { border-color: #fbc02d; color: #f57f17; background: #fffde7; }
+      
+      .show-menu-btn { padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid #ddd; background: white; font-weight: 600; font-size: 0.8rem; cursor: pointer; color: #999; }
+      .show-menu-btn.visible { border-color: #00b14f; color: #00b14f; background: #f0faf4; }
       
       .modal-footer { padding: 1.25rem 1.5rem; border-top: 1px solid #eee; display: flex; justify-content: flex-end; gap: 0.75rem; background: #fafafa; border-radius: 0 0 12px 12px; }
       .modal-footer .btn-cancel { background: white; border: 1px solid #ddd; padding: 0.6rem 1.2rem; border-radius: 6px; font-weight: 600; cursor: pointer; }

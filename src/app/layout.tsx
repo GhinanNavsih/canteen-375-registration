@@ -4,15 +4,23 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Member Registration | Canteen 375",
   description: "Official membership registration for Canteen 375 Plaza Unipdu. Join our community and collect points on every purchase.",
+  manifest: "/manifest.json",
+  themeColor: "#5d4037",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Canteen 375",
+  },
   icons: {
-    icon: "/Logo Canteen 375 (2).png",
-    apple: "/Logo Canteen 375 (2).png",
-  }
+    icon: "/icons/icon-192.png",
+    apple: "/icons/icon-512.png",
+  },
 };
 
 import { MemberProvider } from "@/context/MemberContext";
 import { BasketProvider } from "@/context/BasketContext";
 import StyledJsxRegistry from "./registry";
+import ServiceWorkerRegistrar from "@/components/ServiceWorkerRegistrar";
 
 export default function RootLayout({
   children,
@@ -32,6 +40,7 @@ export default function RootLayout({
             </BasketProvider>
           </MemberProvider>
         </StyledJsxRegistry>
+        <ServiceWorkerRegistrar />
       </body>
     </html>
   );

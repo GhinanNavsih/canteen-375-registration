@@ -55,8 +55,9 @@ export default function MenuDisplayPage() {
           sortedCats = distinctCats.sort();
         }
 
+        const visibleItems = items.filter((i) => i.showMenu !== false);
         setMenuItems(
-          items.sort((a, b) => {
+          visibleItems.sort((a, b) => {
             const orderDiff = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
             return orderDiff !== 0 ? orderDiff : a.namaMenu.localeCompare(b.namaMenu);
           })
