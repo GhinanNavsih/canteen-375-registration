@@ -62,16 +62,18 @@ export default function DashboardPage() {
         }
       });
 
-      // Listen for competition points
+      // Listen for competition points (monthly doc — missing or no user entry => 0)
       const unsubCompetition = onSnapshot(doc(db, "competitionRecords", currentMonth), (docSnap) => {
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          setCompetitionData(data);
-          const userStats = data[member.id];
-          if (userStats) {
-            setCompetitionPoints(userStats.customerPoints || 0);
-          }
+        const mid = member.id.trim();
+        if (!docSnap.exists()) {
+          setCompetitionData(null);
+          setCompetitionPoints(0);
+          return;
         }
+        const data = docSnap.data();
+        setCompetitionData(data);
+        const userStats = data[mid] ?? data[member.id];
+        setCompetitionPoints(userStats?.customerPoints ?? 0);
       });
 
       // Fetch Active Campaigns
@@ -113,35 +115,39 @@ export default function DashboardPage() {
 
   // Reactive Rank Calculation
   useEffect(() => {
-    if (member && competitionData && Object.keys(allMembers).length > 0) {
-      const targetId = member.id.trim();
-      const targetCategory = (liveMember?.category || member.category || "").trim();
-
-      const records: any[] = [];
-      Object.entries(competitionData).forEach(([mId, stats]: [string, any]) => {
-        const trimmedMId = mId.trim();
-        const mInfo = allMembers[trimmedMId];
-
-        // Match the logic used in LeaderboardPage
-        if (mInfo && mInfo.category?.trim() === targetCategory) {
-          records.push({
-            memberId: trimmedMId,
-            points: stats.customerPoints || 0,
-            amountSpent: stats.amountSpent || 0,
-            numberOfTransaction: stats.numberOfTransaction || 0
-          });
-        }
-      });
-
-      const sorted = records.sort((a, b) => {
-        if (b.points !== a.points) return b.points - a.points;
-        if (b.amountSpent !== a.amountSpent) return b.amountSpent - a.amountSpent;
-        return b.numberOfTransaction - a.numberOfTransaction;
-      });
-
-      const rank = sorted.findIndex(r => r.memberId === targetId) + 1;
-      setUserRank(rank > 0 ? rank : null);
+    if (!member || Object.keys(allMembers).length === 0) return;
+    if (!competitionData) {
+      setUserRank(null);
+      return;
     }
+
+    const targetId = member.id.trim();
+    const targetCategory = (liveMember?.category || member.category || "").trim();
+
+    const records: any[] = [];
+    Object.entries(competitionData).forEach(([mId, stats]: [string, any]) => {
+      const trimmedMId = mId.trim();
+      const mInfo = allMembers[trimmedMId];
+
+      // Match the logic used in LeaderboardPage
+      if (mInfo && mInfo.category?.trim() === targetCategory) {
+        records.push({
+          memberId: trimmedMId,
+          points: stats.customerPoints || 0,
+          amountSpent: stats.amountSpent || 0,
+          numberOfTransaction: stats.numberOfTransaction || 0
+        });
+      }
+    });
+
+    const sorted = records.sort((a, b) => {
+      if (b.points !== a.points) return b.points - a.points;
+      if (b.amountSpent !== a.amountSpent) return b.amountSpent - a.amountSpent;
+      return b.numberOfTransaction - a.numberOfTransaction;
+    });
+
+    const rank = sorted.findIndex(r => r.memberId === targetId) + 1;
+    setUserRank(rank > 0 ? rank : null);
   }, [member, competitionData, allMembers, liveMember]);
 
   const handleFeedbackSubmit = async (e: React.FormEvent) => {

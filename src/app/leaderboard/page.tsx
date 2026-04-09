@@ -5,22 +5,22 @@ import { useRouter } from "next/navigation";
 import { useMember } from "@/context/MemberContext";
 import Navbar from "@/components/Navbar";
 import { db } from "@/lib/firebase";
-import { doc, getDoc, collection, getDocs } from "firebase/firestore";
+import { doc, getDoc, collection, getDocs, query, where, onSnapshot } from "firebase/firestore";
 import { CompetitionRecord, Member, Category } from "@/types/member";
+import { VoucherGroup } from "@/types/voucher";
 
 export default function LeaderboardPage() {
-  const { member, loading: sessionLoading } = useMember();
+  const { member, isAdmin, loading: sessionLoading } = useMember();
   const [records, setRecords] = useState<CompetitionRecord[]>([]);
   const [members, setMembers] = useState<Record<string, Member>>({});
   const [selectedCategory, setSelectedCategory] = useState<Category>("Mahasiswa");
   const [loading, setLoading] = useState(true);
+  const [activePrograms, setActivePrograms] = useState<VoucherGroup[]>([]);
   const router = useRouter();
 
   const currentMonth = new Date().toISOString().slice(0, 7); // yyyy-mm
 
   useEffect(() => {
-    // Guests are allowed on the leaderboard, so no redirect is needed here and we skip member requirement
-
     if (member?.category) {
       setSelectedCategory(member.category);
     }
@@ -28,7 +28,6 @@ export default function LeaderboardPage() {
     const fetchData = async () => {
       setLoading(true);
       try {
-        // 1. Fetch all members once (to get categories and clean names)
         const membersSnap = await getDocs(collection(db, "Members"));
         const membersMap: Record<string, Member> = {};
         membersSnap.forEach(doc => {
@@ -36,7 +35,6 @@ export default function LeaderboardPage() {
         });
         setMembers(membersMap);
 
-        // 2. Fetch the current month's competition records
         const competitionDoc = await getDoc(doc(db, "competitionRecords", currentMonth));
 
         if (competitionDoc.exists()) {
@@ -63,9 +61,18 @@ export default function LeaderboardPage() {
       }
     };
 
-    // Fetch leaderboard data for all users, including guests
     fetchData();
   }, [member, sessionLoading, router, currentMonth]);
+
+  // Fetch active voucher programs (for admin cashier display)
+  useEffect(() => {
+    if (!isAdmin) return;
+    const q = query(collection(db, "voucherGroup"), where("isActive", "==", true));
+    const unsub = onSnapshot(q, (snap) => {
+      setActivePrograms(snap.docs.map(d => ({ id: d.id, ...d.data() } as VoucherGroup)));
+    });
+    return () => unsub();
+  }, [isAdmin]);
 
   if (sessionLoading) {
     return <div className="loading-screen">Loading...</div>;
@@ -128,13 +135,13 @@ export default function LeaderboardPage() {
                 {filteredRecords.map((rec, idx) => (
                   <div
                     key={rec.memberId}
-                    className={`lb-item ${rec.memberId === member?.id ? 'is-me' : ''} ${idx === 0 ? 'rank-gold' : idx === 1 ? 'rank-silver' : idx === 2 ? 'rank-bronze' : ''
+                    className={`lb-item ${!isAdmin && rec.memberId === member?.id ? 'is-me' : ''} ${idx === 0 ? 'rank-gold' : idx === 1 ? 'rank-silver' : idx === 2 ? 'rank-bronze' : ''
                       }`}
                   >
                     <div className="lb-rank">{getRankBadge(idx + 1)}</div>
                     <div className="lb-name">
                       <span>{rec.memberName}</span>
-                      {rec.memberId === member?.id && <span className="me-badge">Kamu</span>}
+                      {!isAdmin && rec.memberId === member?.id && <span className="me-badge">Kamu</span>}
                     </div>
                     <div className="lb-stats">
                       <span className="pts">{rec.points} points</span>
@@ -146,9 +153,34 @@ export default function LeaderboardPage() {
             )}
           </div>
 
-          {member && myRank > 0 && !loading && (
+          {!isAdmin && member && myRank > 0 && !loading && (
             <div className="my-rank-summary">
               <p>Posisi kamu saat ini: <strong>Peringkat {myRank}</strong></p>
+            </div>
+          )}
+
+          {isAdmin && activePrograms.length > 0 && (
+            <div className="voucher-programs-section">
+              <h3 className="programs-title">🎁 Program Voucher Aktif</h3>
+              <div className="programs-list">
+                {activePrograms.map((prog) => (
+                  <div key={prog.id} className="program-card">
+                    <div className="program-info">
+                      <span className="program-name">{prog.voucherName}</span>
+                      <span className="program-value">Rp{(prog.value || 0).toLocaleString("id-ID")}</span>
+                    </div>
+                    <div className="program-meta">
+                      <span>🎯 Min. belanja Rp{(prog.transactionRequirement || prog.threshold || 0).toLocaleString("id-ID")}</span>
+                      <span>👥 {prog.totalClaimed || 0}/{prog.totalParticipants || "∞"} diklaim</span>
+                    </div>
+                    {prog.expireDate && (
+                      <div className="program-expire">
+                        Berlaku s.d. {prog.expireDate.toDate().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -305,6 +337,62 @@ export default function LeaderboardPage() {
           color: white;
           font-size: 1.5rem;
           font-weight: 600;
+        }
+
+        /* ── Active Voucher Programs (admin view) ── */
+        .voucher-programs-section {
+          background: white;
+          border-radius: 20px;
+          border: 1.5px solid #000;
+          padding: 1.5rem;
+          box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        .programs-title {
+          font-size: 1.2rem;
+          font-weight: 700;
+          color: #2d241d;
+          margin: 0 0 1rem;
+          text-align: center;
+        }
+        .programs-list {
+          display: flex;
+          flex-direction: column;
+          gap: 0.75rem;
+        }
+        .program-card {
+          background: linear-gradient(135deg, #fff8e1, #fff3e0);
+          border: 1px solid #ffe0b2;
+          border-radius: 12px;
+          padding: 1rem 1.2rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+        }
+        .program-info {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .program-name {
+          font-weight: 700;
+          font-size: 1rem;
+          color: #2d241d;
+        }
+        .program-value {
+          font-weight: 800;
+          font-size: 1.1rem;
+          color: #C51720;
+        }
+        .program-meta {
+          display: flex;
+          justify-content: space-between;
+          font-size: 0.8rem;
+          color: #8d6e63;
+        }
+        .program-expire {
+          font-size: 0.75rem;
+          color: #a0917e;
+          font-style: italic;
         }
       `}</style>
     </div>

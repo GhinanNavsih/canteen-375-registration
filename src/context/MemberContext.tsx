@@ -51,10 +51,19 @@ export function MemberProvider({ children }: { children: React.ReactNode }) {
                         console.log("[MemberContext] User is admin, skipping member profile fetch");
                         setMember(null);
                     } else {
-                        // Regular member — fetch their Firestore profile.
+                        // Regular member — resolve Members doc via MemberLinks, or legacy Members/{authUid}.
                         console.log("[MemberContext] User is not admin, fetching member profile...");
-                        const memberRef = doc(db, 'Members', user.uid);
-                        const memberSnap = await getDoc(memberRef);
+                        const linkSnap = await getDoc(doc(db, "MemberLinks", user.uid));
+                        let memberSnap = null;
+                        if (linkSnap.exists()) {
+                            const mid = linkSnap.data()?.memberDocId as string | undefined;
+                            if (mid) {
+                                memberSnap = await getDoc(doc(db, "Members", mid));
+                            }
+                        }
+                        if (!memberSnap?.exists()) {
+                            memberSnap = await getDoc(doc(db, "Members", user.uid));
+                        }
                         if (memberSnap.exists()) {
                             console.log("[MemberContext] Member profile found");
                             setMember({ ...memberSnap.data(), id: memberSnap.id } as Member);

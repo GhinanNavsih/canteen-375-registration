@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import Image from "next/image";
-import { createUserWithEmailAndPassword } from "firebase/auth";
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { createUserWithEmailAndPassword, deleteUser } from "firebase/auth";
+import { doc, setDoc, serverTimestamp, getDoc, writeBatch } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
+import { buildMemberDocumentId } from "@/lib/memberDocId";
 
 type Category = "Santri" | "Mahasiswa" | "Guru/Dosen" | "";
 
@@ -182,7 +183,22 @@ export default function RegistrationPage() {
     setLoading(true);
 
     try {
-      // Step 1: Create the Firebase Auth account. This is now the identity source.
+      const memberDocId = buildMemberDocumentId(
+        formData.fullName,
+        formData.phoneNumber,
+        formData.email
+      );
+
+      const existingMember = await getDoc(doc(db, "Members", memberDocId));
+      if (existingMember.exists()) {
+        setError(
+          "Profil dengan nama dan nomor/email ini sudah ada. Gunakan nama lain atau lengkapi nomor HP yang berbeda."
+        );
+        setLoading(false);
+        return;
+      }
+
+      // Step 1: Firebase Auth (UID is internal; Members doc id is fullName_phone…)
       const userCredential = await createUserWithEmailAndPassword(
         auth,
         formData.email,
@@ -190,17 +206,30 @@ export default function RegistrationPage() {
       );
       const { uid } = userCredential.user;
 
-      // Step 2: Write the member profile to Firestore, keyed by the Auth UID.
-      // The 'password' and 'confirmPassword' fields are NEVER stored — Auth handles credentials.
       const { password, confirmPassword, ...profileData } = formData;
 
-      await setDoc(doc(db, "Members", uid), {
+      const batch = writeBatch(db);
+      batch.set(doc(db, "MemberLinks", uid), { memberDocId });
+      batch.set(doc(db, "Members", memberDocId), {
         ...profileData,
         uid,
-        role: "member",        // Default RBAC role — admin role set via Cloud Function Custom Claims
+        role: "member",
         points: 0,
         createdAt: serverTimestamp(),
       });
+
+      try {
+        await batch.commit();
+      } catch (batchErr) {
+        if (auth.currentUser) {
+          try {
+            await deleteUser(auth.currentUser);
+          } catch {
+            /* ignore cleanup failure */
+          }
+        }
+        throw batchErr;
+      }
 
       setSuccess(true);
     } catch (err: any) {

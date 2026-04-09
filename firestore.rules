@@ -3,123 +3,265 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ── Helper functions ──────────────────────────────────────────────────────
+    // ── HELPER FUNCTIONS ──────────────────────────────────────────────────────
 
-    // Returns true if the requester is a signed-in Firebase Auth user.
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    // Returns true if the requester has the admin Custom Claim set.
-    // Set this claim via Admin SDK: auth.setCustomUserClaims(uid, { admin: true })
     function isAdmin() {
-      return isAuthenticated() && request.auth.token.admin == true;
+      return isAuthenticated() && (
+        request.auth.token.admin == true ||
+        request.auth.token.email == "gnavsih1@gmail.com" ||
+        request.auth.token.email == "admin@canteen375.com"
+      );
     }
 
-    // Returns true if the requesting user owns the document
-    // (their Auth UID matches the document's stored uid field).
-    function isOwner() {
-      return isAuthenticated() && request.auth.uid == resource.data.uid;
+    // Members doc id may be custom (fullName_phone); field uid == Firebase Auth UID.
+    function isMemberProfileOwner() {
+      return isAuthenticated() && resource.data.uid == request.auth.uid;
     }
 
-    // ── Members collection ─────────────────────────────────────────────────────
-    // Document ID == Firebase Auth UID.
-    match /Members/{uid} {
-      // A member can only read their own profile; admins can read all.
-      allow read: if isAdmin() || (isAuthenticated() && request.auth.uid == uid);
+    // userId / memberId on vouchers, feedbacks, orders may be Auth UID (legacy) or Members document id.
+    function memberIdRefersToAuthUser(memberDocId) {
+      return memberDocId == request.auth.uid ||
+        (exists(/databases/$(database)/documents/Members/$(memberDocId)) &&
+          get(/databases/$(database)/documents/Members/$(memberDocId)).data.uid == request.auth.uid);
+    }
 
-      // Only admins can list/query the full collection (e.g., for the leaderboard backend).
-      // Members access their own doc via the direct path above.
-      allow list: if isAdmin();
+    // ── NEW COLLECTIONS FOR POS APP ───────────────────────────────────────────
 
-      // Members can create their own document on registration (uid must match).
+    match /Categories/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /assets/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /config/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /DailyTransaction/{id} {
+      allow read, write: if isAuthenticated();
+    }
+    match /MonthlyTransaction/{id} {
+      allow read, write: if isAuthenticated();
+    }
+    match /YearlyTransaction/{id} {
+      allow read, write: if isAuthenticated();
+    }
+    match /DailyFinancialReport/{id} {
+      allow read, write, update, delete: if true;
+
+      match /Expenses/{expenseId} {
+        allow read, write, update, delete: if true;
+      }
+    }
+    match /Status/{id} { allow read, write, delete, update: if true; }
+    match /Expenses/{id} { allow read, write: if isAuthenticated(); }
+    match /CashflowSettings/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    match /RecentlyServed/{id} { allow read, write, delete, update: if true; }
+
+    // Maps Firebase Auth UID → Members document id (custom id).
+    match /MemberLinks/{authUid} {
+      allow read: if isAuthenticated() && request.auth.uid == authUid;
       allow create: if isAuthenticated()
-                    && request.auth.uid == uid
-                    && request.resource.data.uid == uid
-                    && request.resource.data.role == "member"; // Cannot self-assign admin
-
-      // Members can update their own profile; admins can update any.
-      allow update: if isAdmin() || (isOwner() && request.auth.uid == uid);
-
-      // Only admins can delete member documents.
-      allow delete: if isAdmin();
-    }
-
-    // ── Vouchers collection ───────────────────────────────────────────────────
-    match /vouchers/{voucherId} {
-      // Members can read only their own vouchers; admins can read all.
-      allow read: if isAdmin() || (isAuthenticated() && request.auth.uid == resource.data.userId);
-
-      // Only Cloud Functions (admin SDK, bypasses rules) create/update vouchers.
-      allow write: if isAdmin();
-    }
-
-    // ── VoucherGroup collection (campaigns) ───────────────────────────────────
-    match /voucherGroup/{groupId} {
-      // All authenticated users can read active campaigns.
-      allow read: if isAuthenticated();
-
-      // Only admins can create or modify campaigns.
-      allow write: if isAdmin();
-    }
-
-    // ── CompetitionRecords collection ─────────────────────────────────────────
-    match /competitionRecords/{monthId} {
-      // All authenticated users can read leaderboard data.
-      allow read: if isAuthenticated();
-
-      // Only Cloud Functions write competition records.
-      allow write: if isAdmin();
-    }
-
-    // ── Feedbacks collection ──────────────────────────────────────────────────
-    match /feedbacks/{feedbackId} {
-      // Members can create feedback and read their own; admins can read all.
-      allow read: if isAdmin() || (isAuthenticated() && resource.data.memberId == request.auth.uid);
-      allow create: if isAuthenticated() && request.resource.data.memberId == request.auth.uid;
+                    && request.auth.uid == authUid
+                    && request.resource.data.memberDocId is string
+                    && request.resource.data.memberDocId.size() > 0;
       allow update, delete: if isAdmin();
     }
 
-    // ── Products collection (public catalog) ──────────────────────────────────
-    match /products/{productId} {
-      allow read: if true; // Public — no auth required to browse the menu
+    // Members: document id is human-readable; field uid == Firebase Auth UID.
+    match /Members/{memberDocId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated()
+                    && request.resource.data.uid == request.auth.uid
+                    && request.resource.data.role == "member";
+      allow update: if isAdmin() || isMemberProfileOwner();
+      allow delete: if isAdmin();
+    }
+
+    // ── VOUCHERS COLLECTIONS ──────────────────────────────────────────────────
+    match /voucher/{id} {
+      allow read: if isAdmin()
+                    || (isAuthenticated() && memberIdRefersToAuthUser(resource.data.userId));
+      allow write: if isAdmin();
+    }
+    match /vouchers/{id} {
+      allow read: if isAdmin()
+                    || (isAuthenticated() && memberIdRefersToAuthUser(resource.data.userId));
       allow write: if isAdmin();
     }
 
+    // ── VOUCHER GROUP (CAMPAIGNS) ─────────────────────────────────────────────
+    match /voucherGroup/{groupId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // ── COMPETITION RECORDS (LEADERBOARD DATA) ────────────────────────────────
+    match /competitionRecords/{monthId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // ── FEEDBACKS ─────────────────────────────────────────────────────────────
+    match /feedbacks/{feedbackId} {
+      allow create: if isAuthenticated()
+                    && memberIdRefersToAuthUser(request.resource.data.memberId);
+      allow read: if isAdmin()
+                    || (isAuthenticated() && memberIdRefersToAuthUser(resource.data.memberId));
+      allow update, delete: if isAdmin();
+    }
+
+    // ── CANTEENS (BRANCH DATA) ────────────────────────────────────────────────
+    match /Canteens/{canteenId} {
+
+      allow read: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow create, delete: if isAdmin();
+
+      match /Inventory/{id} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
+
+      match /DailyStockLogs/{id} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
+
+      match /MenuCollection/{menuId} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
+
+      match /Metadata/{configId} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin() || (isAuthenticated() && configId == 'SelfOrderCounter');
+      }
+
+      match /Metadata/Settings {
+        allow read: if isAuthenticated();
+      }
+
+      match /OptionGroups/{groupId} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
+
+      match /suppliers/{supplierId} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
+
+      match /shoppingOrders/{orderId} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
+
+      match /Status/{orderId} {
+        allow read, write, update, delete: if true;
+      }
+
+      match /RecentlyServed/{orderId} {
+        allow read, write, update, delete: if true;
+      }
+
+      match /SelfOrders/{orderId} {
+        allow read: if isAdmin()
+                      || (isAuthenticated() && memberIdRefersToAuthUser(resource.data.memberId));
+        allow create: if isAuthenticated()
+                        && memberIdRefersToAuthUser(request.resource.data.memberId);
+        allow update, delete: if isAdmin();
+      }
+
+      match /OpenBills/{memberId} {
+        allow read, write, update, delete: if isAuthenticated();
+
+        match /Orders/{tabOrderId} {
+          allow read, write, update, delete: if isAuthenticated();
+        }
+      }
+
+      match /SettledBills/{billId} {
+        allow read, write, update, delete: if isAuthenticated();
+      }
+
+      match /Orders/{orderID} {
+        allow read, write, update, delete: if isAuthenticated();
+      }
+    }
+
+    // ── PUBLIC PRODUCTS (OLD VERSION) ─────────────────────────────────────────
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
     match /products_test/{productId} {
       allow read: if true;
       allow write: if isAdmin();
     }
 
-    // ── Canteens / MenuCollection ─────────────────────────────────────────────
-    // Admin has full CRUD. All authenticated users (members) can read for ordering.
-    match /Canteens/{canteenId}/MenuCollection/{menuId} {
-      allow read: if isAuthenticated();
-      allow create, update, delete: if isAdmin();
+    // ── TESTING MODE COLLECTIONS (zTesting_ prefix) ──────────────────────────────
+    match /zTesting_Categories/{id} {
+      allow read, write, update, delete: if true;
     }
 
-    // ── Canteens / Metadata ───────────────────────────────────────────────────
-    // Admin can manage config (like category order). Members can read it.
-    // Authenticated members can also write to SelfOrderCounter for order numbering.
-    match /Canteens/{canteenId}/Metadata/{configId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin() || (isAuthenticated() && configId == 'SelfOrderCounter');
+    match /zTesting_DailyTransaction/{id} {
+      allow read, write, update, delete: if true;
     }
 
-    // ── Canteens / OptionGroups ───────────────────────────────────────────────
-    // Admin has full CRUD. Members can read for ordering.
-    match /Canteens/{canteenId}/OptionGroups/{groupId} {
-      allow read: if isAuthenticated();
-      allow create, update, delete: if isAdmin();
+    match /zTesting_MonthlyTransaction/{id} {
+      allow read, write, update, delete: if true;
     }
 
-    // ── SelfOrders collection ─────────────────────────────────────────────────
-    match /SelfOrders/{orderId} {
-      // Members can create their own orders and read their own.
-      allow read: if isAdmin() || (isAuthenticated() && resource.data.memberId == request.auth.uid);
-      allow create: if isAuthenticated() && request.resource.data.memberId == request.auth.uid;
-      // Only admins/POS can update status.
-      allow update, delete: if isAdmin();
+    match /zTesting_YearlyTransaction/{id} {
+      allow read, write, update, delete: if true;
+    }
+
+    match /zTesting_DailyFinancialReport/{id} {
+      allow read, write, update, delete: if true;
+      match /Expenses/{expenseId} {
+        allow read, write, update, delete: if true;
+      }
+    }
+
+    match /zTesting_Expenses/{id} {
+      allow read, write: if true;
+    }
+
+    match /zTesting_Status/{id} {
+      allow read, write, update, delete: if true;
+    }
+
+    match /zTesting_RecentlyServed/{id} {
+      allow read, write, delete, update: if true;
+    }
+
+    match /zTesting_Members/{uid} {
+      allow read, write, update, delete: if true;
+    }
+
+    match /zTesting_CashflowSettings/{id} {
+      allow read, write, update, delete: if true;
+    }
+
+    match /zTesting_Canteens/{canteenId} {
+      allow read, write, update, delete: if true;
+
+      match /{subcollection=**} {
+        allow read, write, update, delete: if true;
+      }
     }
   }
 }
