@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useMember } from "@/context/MemberContext";
 import Navbar from "@/components/Navbar";
 import { db } from "@/lib/firebase";
@@ -10,19 +10,27 @@ import { CompetitionRecord, Member, Category } from "@/types/member";
 import { VoucherGroup } from "@/types/voucher";
 
 export default function LeaderboardPage() {
-  const { member, isAdmin, loading: sessionLoading } = useMember();
+  const { member, isAdmin, firebaseUser, loading: sessionLoading } = useMember();
   const [records, setRecords] = useState<CompetitionRecord[]>([]);
   const [members, setMembers] = useState<Record<string, Member>>({});
   const [selectedCategory, setSelectedCategory] = useState<Category>("Mahasiswa");
   const [loading, setLoading] = useState(true);
   const [activePrograms, setActivePrograms] = useState<VoucherGroup[]>([]);
-  const router = useRouter();
 
   const currentMonth = new Date().toISOString().slice(0, 7); // yyyy-mm
 
   useEffect(() => {
     if (member?.category) {
       setSelectedCategory(member.category);
+    }
+
+    if (sessionLoading) return;
+
+    if (!firebaseUser) {
+      setMembers({});
+      setRecords([]);
+      setLoading(false);
+      return;
     }
 
     const fetchData = async () => {
@@ -53,6 +61,8 @@ export default function LeaderboardPage() {
           });
 
           setRecords(parsedRecords);
+        } else {
+          setRecords([]);
         }
       } catch (err) {
         console.error("Error fetching leaderboard:", err);
@@ -62,20 +72,77 @@ export default function LeaderboardPage() {
     };
 
     fetchData();
-  }, [member, sessionLoading, router, currentMonth]);
+  }, [member, sessionLoading, firebaseUser, currentMonth]);
 
-  // Fetch active voucher programs (for admin cashier display)
+  // Active voucher campaigns (announcement above leaderboard — cashier + members)
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!firebaseUser) return;
     const q = query(collection(db, "voucherGroup"), where("isActive", "==", true));
-    const unsub = onSnapshot(q, (snap) => {
-      setActivePrograms(snap.docs.map(d => ({ id: d.id, ...d.data() } as VoucherGroup)));
-    });
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        setActivePrograms(snap.docs.map(d => ({ id: d.id, ...d.data() } as VoucherGroup)));
+      },
+      (err) => {
+        console.error("Leaderboard voucherGroup listener:", err);
+        setActivePrograms([]);
+      }
+    );
     return () => unsub();
-  }, [isAdmin]);
+  }, [firebaseUser]);
 
   if (sessionLoading) {
     return <div className="loading-screen">Loading...</div>;
+  }
+
+  if (!firebaseUser) {
+    return (
+      <div className="leaderboard-wrapper">
+        <Navbar />
+        <main className="leaderboard-main">
+          <div className="leaderboard-container animate-fade-in">
+            <div className="lb-guest-card">
+              <h2>Papan peringkat</h2>
+              <p>Silakan masuk untuk melihat leaderboard dan program voucher.</p>
+              <Link href="/login?redirect=/leaderboard" className="lb-login-btn">
+                Masuk
+              </Link>
+            </div>
+          </div>
+        </main>
+        <style jsx>{`
+          .leaderboard-wrapper { min-height: 100vh; background: #C51720; }
+          .leaderboard-main {
+            padding: 2rem 1rem;
+            display: flex;
+            justify-content: center;
+            background: rgba(250, 247, 242, 0.66);
+            backdrop-filter: blur(300px);
+            min-height: 70vh;
+          }
+          .leaderboard-container { width: 100%; max-width: 600px; }
+          .lb-guest-card {
+            background: white;
+            border-radius: 20px;
+            border: 1.5px solid #000;
+            padding: 2rem;
+            text-align: center;
+            color: #2d241d;
+          }
+          .lb-guest-card h2 { margin: 0 0 0.75rem; font-size: 1.5rem; }
+          .lb-guest-card p { margin: 0 0 1.25rem; color: #5d4037; line-height: 1.5; }
+          .lb-login-btn {
+            display: inline-block;
+            background: #C51720;
+            color: white;
+            font-weight: 700;
+            padding: 0.75rem 1.75rem;
+            border-radius: 12px;
+            text-decoration: none;
+          }
+        `}</style>
+      </div>
+    );
   }
 
   // Filter records by category and sort by points
@@ -112,6 +179,43 @@ export default function LeaderboardPage() {
             <h2>🏆 Leaderboard {new Date().toLocaleString('id-ID', { month: 'long', year: 'numeric' })}</h2>
             <p>Berkompetisi untuk mendapatkan voucher menarik!</p>
           </div>
+
+          {activePrograms.length > 0 && (
+            <aside className="voucher-announcement" aria-label="Program voucher aktif">
+              <div className="announcement-badge">📢 Pengumuman</div>
+              <h3 className="announcement-title">🎁 Program Voucher Aktif</h3>
+              <p className="announcement-nudge">
+                Naik peringkat dan raih reward — klaim di menu <strong>Voucher Aktif</strong> di akunmu!
+              </p>
+              <div className="announcement-programs">
+                {activePrograms.map((prog) => (
+                  <div key={prog.id} className="announcement-program-row">
+                    <div className="announcement-program-main">
+                      <span className="announcement-program-name">{prog.voucherName}</span>
+                      <span className="announcement-program-value">Rp{(prog.value || 0).toLocaleString("id-ID")}</span>
+                    </div>
+                    {(prog.threshold ?? 0) > 0 && (
+                      <div className="announcement-points-needed">
+                        ⭐ Kumpulkan{" "}
+                        <strong>{(prog.threshold ?? 0).toLocaleString("id-ID")} poin</strong> untuk mendapatkan voucher ini
+                        <br />
+                      </div>
+                    )}
+                    <div className="announcement-program-foot">
+                      {prog.totalParticipants != null && (
+                        <span>👥 {prog.totalClaimed || 0}/{prog.totalParticipants} peserta</span>
+                      )}
+                      {prog.expireDate && (
+                        <span className="announcement-expire">
+                          s.d. {prog.expireDate.toDate().toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </aside>
+          )}
 
           <div className="category-tabs">
             {(["Santri", "Mahasiswa", "Guru/Dosen"] as Category[]).map(cat => (
@@ -156,31 +260,6 @@ export default function LeaderboardPage() {
           {!isAdmin && member && myRank > 0 && !loading && (
             <div className="my-rank-summary">
               <p>Posisi kamu saat ini: <strong>Peringkat {myRank}</strong></p>
-            </div>
-          )}
-
-          {isAdmin && activePrograms.length > 0 && (
-            <div className="voucher-programs-section">
-              <h3 className="programs-title">🎁 Program Voucher Aktif</h3>
-              <div className="programs-list">
-                {activePrograms.map((prog) => (
-                  <div key={prog.id} className="program-card">
-                    <div className="program-info">
-                      <span className="program-name">{prog.voucherName}</span>
-                      <span className="program-value">Rp{(prog.value || 0).toLocaleString("id-ID")}</span>
-                    </div>
-                    <div className="program-meta">
-                      <span>🎯 Min. belanja Rp{(prog.transactionRequirement || prog.threshold || 0).toLocaleString("id-ID")}</span>
-                      <span>👥 {prog.totalClaimed || 0}/{prog.totalParticipants || "∞"} diklaim</span>
-                    </div>
-                    {prog.expireDate && (
-                      <div className="program-expire">
-                        Berlaku s.d. {prog.expireDate.toDate().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
             </div>
           )}
         </div>
@@ -268,15 +347,30 @@ export default function LeaderboardPage() {
         }
         .lb-item.rank-gold {
           background: linear-gradient(to right, #fffdf2, #fff9c4);
-          border-bottom: 2px solid #ffd700;
-          margin-bottom: 8px; /* Highlighting first place with extra spacing */
-          border-radius: 0 0 12px 12px;
+          border-bottom: none;
+          margin-bottom: 10px;
+          border-radius: 12px;
+          box-shadow:
+            0 0 0 2px #e6bc00,
+            0 4px 14px rgba(230, 188, 0, 0.35);
         }
         .lb-item.rank-silver {
-          background: linear-gradient(to right, #fafafa, #f5f5f5);
+          background: linear-gradient(to right, #fafafa, #eceff4);
+          border-bottom: none;
+          margin-bottom: 10px;
+          border-radius: 12px;
+          box-shadow:
+            0 0 0 2px #9aa3b2,
+            0 4px 14px rgba(154, 163, 178, 0.4);
         }
         .lb-item.rank-bronze {
-          background: linear-gradient(to right, #fff9f5, #fdf5f0);
+          background: linear-gradient(to right, #fff9f5, #fdf0e8);
+          border-bottom: none;
+          margin-bottom: 10px;
+          border-radius: 12px;
+          box-shadow:
+            0 0 0 2px #b87333,
+            0 4px 14px rgba(184, 115, 51, 0.35);
         }
         .lb-rank {
           width: 40px;
@@ -339,60 +433,103 @@ export default function LeaderboardPage() {
           font-weight: 600;
         }
 
-        /* ── Active Voucher Programs (admin view) ── */
-        .voucher-programs-section {
-          background: white;
-          border-radius: 20px;
-          border: 1.5px solid #000;
-          padding: 1.5rem;
-          box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        /* ── Voucher announcement (above leaderboard) ── */
+        .voucher-announcement {
+          background: linear-gradient(145deg, #fffdf5 0%, #fff3e0 45%, #ffe8cc 100%);
+          border-radius: 16px;
+          border: 3px solid #f9a825;
+          padding: 1.25rem 1.35rem 1.35rem;
+          box-shadow:
+            0 0 0 1px rgba(255, 193, 7, 0.5),
+            0 8px 28px rgba(197, 23, 32, 0.12),
+            0 2px 0 rgba(255, 255, 255, 0.6) inset;
         }
-        .programs-title {
-          font-size: 1.2rem;
-          font-weight: 700;
-          color: #2d241d;
-          margin: 0 0 1rem;
-          text-align: center;
-        }
-        .programs-list {
-          display: flex;
-          flex-direction: column;
-          gap: 0.75rem;
-        }
-        .program-card {
-          background: linear-gradient(135deg, #fff8e1, #fff3e0);
-          border: 1px solid #ffe0b2;
-          border-radius: 12px;
-          padding: 1rem 1.2rem;
-          display: flex;
-          flex-direction: column;
-          gap: 0.5rem;
-        }
-        .program-info {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-        .program-name {
-          font-weight: 700;
-          font-size: 1rem;
-          color: #2d241d;
-        }
-        .program-value {
+        .announcement-badge {
+          display: inline-block;
+          font-size: 0.72rem;
           font-weight: 800;
-          font-size: 1.1rem;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: #bf360c;
+          background: rgba(255, 255, 255, 0.85);
+          padding: 0.25rem 0.65rem;
+          border-radius: 999px;
+          border: 1px solid #ffcc80;
+          margin-bottom: 0.5rem;
+        }
+        .announcement-title {
+          font-size: 1.25rem;
+          font-weight: 800;
+          color: #2d241d;
+          margin: 0 0 0.45rem;
+          line-height: 1.25;
+        }
+        .announcement-nudge {
+          font-size: 0.88rem;
+          color: #5d4037;
+          line-height: 1.45;
+          margin: 0 0 1rem;
+        }
+        .announcement-nudge strong {
           color: #C51720;
         }
-        .program-meta {
+        .announcement-programs {
+          display: flex;
+          flex-direction: column;
+          gap: 0.65rem;
+        }
+        .announcement-program-row {
+          background: rgba(255, 255, 255, 0.92);
+          border: 2px solid #ffb74d;
+          border-radius: 12px;
+          padding: 0.85rem 1rem;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+        }
+        .announcement-points-needed {
+          font-size: 0.86rem;
+          color: #4e342e;
+          line-height: 1.4;
+          margin-top: 0.5rem;
+          padding: 0.5rem 0.65rem;
+          background: rgba(255, 213, 79, 0.25);
+          border-radius: 8px;
+          border: 1px solid rgba(249, 168, 37, 0.45);
+        }
+        .announcement-points-needed strong {
+          color: #bf360c;
+          font-weight: 800;
+        }
+        .announcement-program-main {
           display: flex;
           justify-content: space-between;
-          font-size: 0.8rem;
+          align-items: flex-start;
+          gap: 0.75rem;
+        }
+        .announcement-program-name {
+          font-weight: 700;
+          font-size: 0.95rem;
+          color: #2d241d;
+          flex: 1;
+          line-height: 1.3;
+        }
+        .announcement-program-value {
+          font-weight: 800;
+          font-size: 1.05rem;
+          color: #C51720;
+          white-space: nowrap;
+        }
+        .announcement-program-foot {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: space-between;
+          gap: 0.35rem 0.75rem;
+          margin-top: 0.45rem;
+          font-size: 0.78rem;
           color: #8d6e63;
         }
-        .program-expire {
-          font-size: 0.75rem;
-          color: #a0917e;
+        .announcement-expire {
           font-style: italic;
+          color: #a1887f;
         }
       `}</style>
     </div>

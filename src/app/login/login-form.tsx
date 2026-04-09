@@ -5,6 +5,7 @@ import Image from "next/image";
 import { useSearchParams, useRouter } from "next/navigation";
 import { signInWithEmailAndPassword, getAuth } from "firebase/auth";
 import { auth } from "@/lib/firebase";
+import { userIsAdminFromToken } from "@/lib/adminAuth";
 
 export default function LoginForm() {
     const searchParams = useSearchParams();
@@ -36,7 +37,7 @@ export default function LoginForm() {
             console.log("[LOGIN] All claims:", tokenResult.claims);
             console.log("[LOGIN] Admin claim value:", tokenResult.claims.admin);
 
-            const isAdminUser = tokenResult.claims.admin === true;
+            const isAdminUser = userIsAdminFromToken(userCred.user, tokenResult.claims as { admin?: boolean });
             console.log("[LOGIN] Is admin user?", isAdminUser);
 
             // Redirect to /admin/menu for admins, otherwise use the passed redirect or default to /dashboard

@@ -6,6 +6,7 @@ import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
 import { Member } from '@/types/member';
+import { userIsAdminFromToken } from '@/lib/adminAuth';
 
 interface MemberContextType {
     member: Member | null;       // null for admins (they have no member profile)
@@ -41,11 +42,11 @@ export function MemberProvider({ children }: { children: React.ReactNode }) {
                     console.log("[MemberContext] All claims:", tokenResult.claims);
                     console.log("[MemberContext] Admin claim value:", tokenResult.claims.admin);
 
-                    const adminClaim = tokenResult.claims.admin === true;
-                    console.log("[MemberContext] Setting isAdmin to:", adminClaim);
-                    setIsAdmin(adminClaim);
+                    const adminUser = userIsAdminFromToken(user, tokenResult.claims as { admin?: boolean });
+                    console.log("[MemberContext] Setting isAdmin to:", adminUser);
+                    setIsAdmin(adminUser);
 
-                    if (adminClaim) {
+                    if (adminUser) {
                         // Admins have NO member profile in Firestore.
                         // They are excluded from competitions, vouchers, and all member logic.
                         console.log("[MemberContext] User is admin, skipping member profile fetch");
