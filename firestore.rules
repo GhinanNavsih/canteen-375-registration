@@ -81,8 +81,11 @@ service cloud.firestore {
     }
 
     // Members: document id is human-readable; field uid == Firebase Auth UID.
+    // Register page checks duplicate via getDoc before sign-up (still anonymous): allow get only if doc is absent so existing profiles stay private.
     match /Members/{memberDocId} {
-      allow read: if isAuthenticated();
+      allow get: if !exists(/databases/$(database)/documents/Members/$(memberDocId))
+                  || isAuthenticated();
+      allow list: if isAuthenticated();
       allow create: if isAuthenticated()
                     && request.resource.data.uid == request.auth.uid
                     && request.resource.data.role == "member";
