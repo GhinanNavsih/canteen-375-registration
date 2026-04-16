@@ -255,8 +255,13 @@ export default function DashboardPage() {
 
             return (
               <div className="campaigns-card">
+                <div className="campaigns-shimmer" />
                 <div className="card-header-with-link">
-                  <h3>🎉 Promo Terbatas!</h3>
+                  <div>
+                    <div className="promo-badge">🎊 Promo Terbatas</div>
+                    <h3>🎁 Voucher Aktif</h3>
+                    <p className="promo-nudge">Kumpulkan poin dan raih cashback — jangan sampai terlewat!</p>
+                  </div>
                   <Link href="/vouchers" className="view-all-link">Lihat Semua →</Link>
                 </div>
                 <div className="campaigns-grid">
@@ -304,24 +309,25 @@ export default function DashboardPage() {
                       >
                         <div className="c-header">
                           <span className="c-name">{voucherName}</span>
-                          <span className="c-value">Cashback Rp{value.toLocaleString('id-ID')}</span>
+                          <span className="c-value shine-blink-once">Rp{value.toLocaleString('id-ID')}</span>
                         </div>
 
-                        <div className="c-urgency">
+                        {(threshold > 0) && (
+                          <div className="c-points-needed">
+                            ⭐ Kumpulkan <strong>{threshold.toLocaleString('id-ID')} poin</strong> untuk mendapatkan voucher ini
+                          </div>
+                        )}
+
+                        <div className="c-footer-row">
                           <span className={`nudge-text ${diffMs < 86400000 ? 'critical' : diffMs < 604800000 ? 'urgent' : 'normal'}`}>
-                            {diffMs < 604800000 ? timerText + " ⏳" : `Berlaku s/d ${expDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}`}
+                            {diffMs < 604800000 ? `⏳ ${timerText}` : `s.d. ${expDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}`}
                           </span>
-                          {diffMs < 604800000 && (
-                            <div className="exp-date-sub">
-                              s/d {expDate.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} • {expDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
-                            </div>
-                          )}
                         </div>
 
                         {isReadyToClaim ? (
                           <div className="c-ready-section">
                             <div className="c-complete-msg">
-                              Voucher Siap Diklaim! 🎁
+                              🎁 Voucher Siap Diklaim!
                             </div>
                             <div className="c-requirement-notice">
                               Minimal transaksi <strong>Rp{(transactionReq || 0).toLocaleString('id-ID')}</strong> untuk aktivasi cashback.
@@ -333,7 +339,7 @@ export default function DashboardPage() {
                               <div className="c-progress-bar" style={{ width: `${percent}%` }}></div>
                             </div>
                             <p className="c-progress-text">
-                              Kumpulkan {remaining} poin lagi untuk klaim voucher!
+                              ✨ Kumpulkan {remaining} poin lagi untuk klaim voucher!
                             </p>
                           </div>
                         )}
@@ -518,54 +524,113 @@ export default function DashboardPage() {
           font-size: 3.5rem;
           filter: drop-shadow(0 4px 10px rgba(0,0,0,0.2));
         }
+        /* ── Festive Voucher Card ── */
         .campaigns-card {
-          background: white;
+          background: linear-gradient(145deg, #fffdf5 0%, #fff3e0 45%, #ffe8cc 100%);
           border-radius: 20px;
-          padding: 2rem;
-          box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-          border: 1.5px solid #000;
+          padding: 1.5rem 1.5rem 1.75rem;
+          border: 3px solid #f9a825;
+          box-shadow:
+            0 0 0 1px rgba(255, 193, 7, 0.5),
+            0 8px 28px rgba(197, 23, 32, 0.12),
+            0 2px 0 rgba(255, 255, 255, 0.6) inset;
+          position: relative;
+          overflow: hidden;
+        }
+        .campaigns-shimmer {
+          position: absolute;
+          top: 0;
+          left: -100%;
+          width: 50%;
+          height: 100%;
+          background: linear-gradient(
+            90deg,
+            transparent 0%,
+            rgba(255, 248, 200, 0.5) 40%,
+            rgba(255, 215, 0, 0.25) 50%,
+            rgba(255, 248, 200, 0.5) 60%,
+            transparent 100%
+          );
+          animation: shimmerSlide 4s ease-in-out infinite;
+          pointer-events: none;
+        }
+        @keyframes shimmerSlide {
+          0% { left: -100%; }
+          50% { left: 100%; }
+          100% { left: 100%; }
+        }
+        .promo-badge {
+          display: inline-block;
+          font-size: 0.72rem;
+          font-weight: 800;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: #bf360c;
+          background: rgba(255, 255, 255, 0.85);
+          padding: 0.25rem 0.65rem;
+          border-radius: 999px;
+          border: 1px solid #ffcc80;
+          margin-bottom: 0.5rem;
+        }
+        .promo-nudge {
+          font-size: 0.88rem;
+          color: #5d4037;
+          line-height: 1.45;
+          margin: 0.35rem 0 0;
         }
         .campaigns-card h3 {
           margin: 0;
+          font-size: 1.25rem;
+          font-weight: 800;
           color: #2d241d;
+          line-height: 1.25;
         }
         .card-header-with-link {
           display: flex;
           justify-content: space-between;
-          align-items: center;
-          margin-bottom: 1.5rem;
+          align-items: flex-start;
+          margin-bottom: 1.25rem;
+          gap: 0.75rem;
         }
         .view-all-link {
-          font-size: 0.9rem;
+          font-size: 0.82rem;
           font-weight: 700;
-          color: #C51720;
-          text-decoration: none;
+          color: #bf360c;
+          text-decoration: underline;
+          text-underline-offset: 3px;
+          white-space: nowrap;
           transition: all 0.2s;
+          flex-shrink: 0;
+          margin-top: 1.6rem;
         }
         .view-all-link:hover {
           transform: translateX(4px);
-          opacity: 0.8;
+          color: #C51720;
         }
         .campaigns-grid {
           display: flex;
           flex-direction: column;
-          gap: 1.2rem;
+          gap: 0.75rem;
         }
         .campaign-item {
-          background: #faf7f2;
-          border: 1.5px solid #d4a373;
-          border-radius: 16px;
-          padding: 1.5rem;
+          background: rgba(255, 255, 255, 0.92);
+          border: 2px solid #ffb74d;
+          border-radius: 14px;
+          padding: 1rem 1.15rem;
           display: flex;
           flex-direction: column;
-          gap: 1rem;
+          gap: 0.6rem;
           position: relative;
           overflow: hidden;
-          transition: all 0.3s;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
         .campaign-item.complete {
-          background: #f1f8e9;
+          background: linear-gradient(135deg, rgba(255,255,255,0.95) 0%, #f1f8e9 100%);
           border-color: #8bc34a;
+          box-shadow:
+            0 0 0 1px rgba(139, 195, 74, 0.3),
+            0 4px 14px rgba(139, 195, 74, 0.15);
         }
         .campaign-item.claimed {
           background: #f5f5f5;
@@ -576,35 +641,63 @@ export default function DashboardPage() {
           cursor: pointer;
         }
         .campaign-item.clickable:hover {
-          transform: translateY(-4px);
-          box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+          transform: translateY(-3px);
+          box-shadow:
+            0 0 0 1px rgba(139, 195, 74, 0.4),
+            0 8px 24px rgba(139, 195, 74, 0.2);
           border-color: #4caf50;
         }
         .c-header {
           display: flex;
           justify-content: space-between;
           align-items: flex-start;
-          gap: 1rem;
+          gap: 0.75rem;
         }
         .c-name {
-          font-size: 1.2rem;
+          font-size: 1rem;
           font-weight: 700;
           color: #2d241d;
+          flex: 1;
+          line-height: 1.3;
         }
         .c-value {
-          background: #C51720;
-          color: white;
-          padding: 0.3rem 0.8rem;
-          border-radius: 20px;
-          font-size: 0.9rem;
-          font-weight: 700;
+          font-weight: 800;
+          font-size: 1.05rem;
+          color: #C51720;
           white-space: nowrap;
+          display: inline-block;
         }
-        .c-urgency {
-          margin-top: -0.5rem;
+        .shine-blink-once {
+          animation: textShineOnce 2s ease-out 1;
+        }
+        @keyframes textShineOnce {
+          0% { text-shadow: 0 0 0 rgba(255,215,0,0); }
+          50% { text-shadow: 0 0 12px rgba(255,215,0,0.8), 0 0 20px rgba(255,223,0,0.4); transform: scale(1.1); }
+          100% { text-shadow: 0 0 0 rgba(255,215,0,0); transform: scale(1); }
+        }
+        .c-points-needed {
+          font-size: 0.86rem;
+          color: #4e342e;
+          line-height: 1.4;
+          padding: 0.5rem 0.65rem;
+          background: rgba(255, 213, 79, 0.25);
+          border-radius: 8px;
+          border: 1px solid rgba(249, 168, 37, 0.45);
+        }
+        .c-points-needed strong {
+          color: #bf360c;
+          font-weight: 800;
+        }
+        .c-footer-row {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: space-between;
+          gap: 0.35rem 0.75rem;
+          font-size: 0.78rem;
+          color: #8d6e63;
         }
         .nudge-text {
-          font-size: 0.85rem;
+          font-size: 0.82rem;
           font-weight: 600;
         }
         .nudge-text.urgent {
@@ -617,33 +710,31 @@ export default function DashboardPage() {
           animation: shake 1s infinite alternate;
         }
         .nudge-text.normal {
-          color: #7d6a5e;
-        }
-        .exp-date-sub {
-          font-size: 0.75rem;
-          color: #8d6e63;
-          margin-top: 0.1rem;
-          font-weight: 500;
+          color: #a1887f;
+          font-style: italic;
         }
         .c-progress-section {
-          margin-top: 0.5rem;
+          margin-top: 0.25rem;
         }
         .c-progress-bar-container {
           height: 10px;
-          background: #e0e0e0;
+          background: rgba(255, 213, 79, 0.25);
           border-radius: 5px;
           overflow: hidden;
           margin-bottom: 0.5rem;
+          border: 1px solid rgba(249, 168, 37, 0.3);
         }
         .c-progress-bar {
           height: 100%;
-          background: linear-gradient(90deg, #ff9800, #ff5722);
-          transition: width 0.5s ease-out;
+          background: linear-gradient(90deg, #f9a825, #ff8f00, #ff6f00);
+          transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+          border-radius: 5px;
+          position: relative;
         }
         .c-progress-text {
           font-size: 0.85rem;
           color: #5d4037;
-          font-weight: 500;
+          font-weight: 600;
         }
         .c-ready-section {
           display: flex;
@@ -654,11 +745,16 @@ export default function DashboardPage() {
           font-size: 1rem;
           font-weight: 700;
           color: #2e7d32;
-          background: #e8f5e9;
+          background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
           padding: 0.8rem;
           border-radius: 12px;
           text-align: center;
-          border: 1px dashed #2e7d32;
+          border: 2px dashed #4caf50;
+          animation: readyPulse 2.5s ease-in-out infinite;
+        }
+        @keyframes readyPulse {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0); }
+          50% { box-shadow: 0 0 0 4px rgba(76, 175, 80, 0.15); }
         }
         .c-requirement-notice {
           font-size: 0.85rem;

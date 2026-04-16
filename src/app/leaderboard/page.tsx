@@ -1,13 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useMember } from "@/context/MemberContext";
 import Navbar from "@/components/Navbar";
 import { db } from "@/lib/firebase";
-import { doc, getDoc, collection, getDocs, query, where, onSnapshot } from "firebase/firestore";
+import { doc, collection, query, where, onSnapshot } from "firebase/firestore";
 import { CompetitionRecord, Member, Category } from "@/types/member";
 import { VoucherGroup } from "@/types/voucher";
+
+/** Track which members just received points and which moved up in rank */
+interface AnimationState {
+  pointBump: Set<string>;   // memberIds that just got points
+  rankUp: Set<string>;      // memberIds that moved up
+  rankDown: Set<string>;    // memberIds that moved down
+}
 
 export default function LeaderboardPage() {
   const { member, isAdmin, firebaseUser, loading: sessionLoading } = useMember();
@@ -16,6 +23,16 @@ export default function LeaderboardPage() {
   const [selectedCategory, setSelectedCategory] = useState<Category>("Mahasiswa");
   const [loading, setLoading] = useState(true);
   const [activePrograms, setActivePrograms] = useState<VoucherGroup[]>([]);
+  const [animations, setAnimations] = useState<AnimationState>({
+    pointBump: new Set(),
+    rankUp: new Set(),
+    rankDown: new Set(),
+  });
+
+  // Keep previous snapshots to detect changes
+  const prevRecordsRef = useRef<CompetitionRecord[]>([]);
+  const prevRankMapRef = useRef<Map<string, number>>(new Map());
+  const isFirstLoadRef = useRef(true);
 
   const currentMonth = new Date().toISOString().slice(0, 7); // yyyy-mm
 
@@ -23,7 +40,10 @@ export default function LeaderboardPage() {
     if (member?.category) {
       setSelectedCategory(member.category);
     }
+  }, [member?.category]);
 
+  // ─── Real-time listeners for Members + CompetitionRecords ───
+  useEffect(() => {
     if (sessionLoading) return;
 
     if (!firebaseUser) {
@@ -33,48 +53,61 @@ export default function LeaderboardPage() {
       return;
     }
 
-    const fetchData = async () => {
-      setLoading(true);
-      try {
-        const membersSnap = await getDocs(collection(db, "Members"));
+    setLoading(true);
+    isFirstLoadRef.current = true;
+
+    // Listener 1: Members collection
+    const unsubMembers = onSnapshot(
+      collection(db, "Members"),
+      (snap) => {
         const membersMap: Record<string, Member> = {};
-        membersSnap.forEach(doc => {
-          membersMap[doc.id] = { id: doc.id, ...doc.data() } as Member;
+        snap.forEach((d) => {
+          membersMap[d.id] = { id: d.id, ...d.data() } as Member;
         });
         setMembers(membersMap);
+      },
+      (err) => {
+        console.error("Members listener error:", err);
+      }
+    );
 
-        const competitionDoc = await getDoc(doc(db, "competitionRecords", currentMonth));
-
-        if (competitionDoc.exists()) {
-          const data = competitionDoc.data();
-          const parsedRecords: CompetitionRecord[] = [];
+    // Listener 2: Competition records document for the current month
+    const unsubCompetition = onSnapshot(
+      doc(db, "competitionRecords", currentMonth),
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          const parsed: CompetitionRecord[] = [];
 
           Object.entries(data).forEach(([memberId, stats]: [string, any]) => {
-            const memberInfo = membersMap[memberId];
-            parsedRecords.push({
+            parsed.push({
               memberId,
-              memberName: memberInfo?.fullName || memberId.split('_')[0],
+              memberName: "", // will be resolved at render time from `members`
               amountSpent: stats.amountSpent || 0,
               points: stats.customerPoints || 0,
-              numberOfTransaction: stats.numberOfTransaction || 0
+              numberOfTransaction: stats.numberOfTransaction || 0,
             });
           });
 
-          setRecords(parsedRecords);
+          setRecords(parsed);
         } else {
           setRecords([]);
         }
-      } catch (err) {
-        console.error("Error fetching leaderboard:", err);
-      } finally {
+        setLoading(false);
+      },
+      (err) => {
+        console.error("CompetitionRecords listener error:", err);
         setLoading(false);
       }
+    );
+
+    return () => {
+      unsubMembers();
+      unsubCompetition();
     };
+  }, [sessionLoading, firebaseUser, currentMonth]);
 
-    fetchData();
-  }, [member, sessionLoading, firebaseUser, currentMonth]);
-
-  // Active voucher campaigns (announcement above leaderboard — cashier + members)
+  // Active voucher campaigns (already real-time)
   useEffect(() => {
     if (!firebaseUser) return;
     const q = query(collection(db, "voucherGroup"), where("isActive", "==", true));
@@ -90,6 +123,97 @@ export default function LeaderboardPage() {
     );
     return () => unsub();
   }, [firebaseUser]);
+
+  // ─── Detect point bumps & rank changes ───
+  const detectAnimations = useCallback(
+    (currentFiltered: CompetitionRecord[]) => {
+      // Skip animation triggers on the very first render
+      if (isFirstLoadRef.current) {
+        isFirstLoadRef.current = false;
+        // Seed prev state
+        prevRecordsRef.current = currentFiltered;
+        const rankMap = new Map<string, number>();
+        currentFiltered.forEach((r, i) => rankMap.set(r.memberId, i));
+        prevRankMapRef.current = rankMap;
+        return;
+      }
+
+      const prevRecords = prevRecordsRef.current;
+      const prevRankMap = prevRankMapRef.current;
+
+      const pointBump = new Set<string>();
+      const rankUp = new Set<string>();
+      const rankDown = new Set<string>();
+
+      // Build a quick lookup for previous points
+      const prevPointsMap = new Map<string, number>();
+      prevRecords.forEach((r) => prevPointsMap.set(r.memberId, r.points));
+
+      currentFiltered.forEach((rec, newIndex) => {
+        const oldPoints = prevPointsMap.get(rec.memberId);
+        // Point bump: member existed before and points increased
+        if (oldPoints !== undefined && rec.points > oldPoints) {
+          pointBump.add(rec.memberId);
+        }
+
+        const oldIndex = prevRankMap.get(rec.memberId);
+        if (oldIndex !== undefined) {
+          if (newIndex < oldIndex) rankUp.add(rec.memberId);
+          else if (newIndex > oldIndex) rankDown.add(rec.memberId);
+        }
+      });
+
+      if (pointBump.size > 0 || rankUp.size > 0 || rankDown.size > 0) {
+        setAnimations({ pointBump, rankUp, rankDown });
+
+        // Clear animations after they play
+        setTimeout(() => {
+          setAnimations({ pointBump: new Set(), rankUp: new Set(), rankDown: new Set() });
+        }, 1800);
+      }
+
+      // Update prev refs
+      prevRecordsRef.current = currentFiltered;
+      const newRankMap = new Map<string, number>();
+      currentFiltered.forEach((r, i) => newRankMap.set(r.memberId, i));
+      prevRankMapRef.current = newRankMap;
+    },
+    []
+  );
+
+  // ─── Derived: filter + sort ───
+  const filteredRecords = records
+    .map((r) => ({
+      ...r,
+      memberName:
+        members[r.memberId]?.fullName || r.memberId.split("_")[0],
+    }))
+    .filter((r) => {
+      const m = members[r.memberId];
+      return m?.category === selectedCategory;
+    })
+    .sort((a, b) => {
+      if (b.points !== a.points) return b.points - a.points;
+      if (b.amountSpent !== a.amountSpent) return b.amountSpent - a.amountSpent;
+      return b.numberOfTransaction - a.numberOfTransaction;
+    });
+
+  // Trigger animation detection whenever filteredRecords changes
+  useEffect(() => {
+    if (!loading) {
+      detectAnimations(filteredRecords);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [records, members, selectedCategory, loading]);
+
+  const myRank = filteredRecords.findIndex((r) => r.memberId === member?.id) + 1;
+
+  const getRankBadge = (rank: number) => {
+    if (rank === 1) return "🥇";
+    if (rank === 2) return "🥈";
+    if (rank === 3) return "🥉";
+    return `#${rank}`;
+  };
 
   if (sessionLoading) {
     return <div className="loading-screen">Loading...</div>;
@@ -145,31 +269,6 @@ export default function LeaderboardPage() {
     );
   }
 
-  // Filter records by category and sort by points
-  const filteredRecords = records
-    .filter(r => {
-      const m = members[r.memberId];
-      return m?.category === selectedCategory;
-    })
-    .sort((a, b) => {
-      if (b.points !== a.points) {
-        return b.points - a.points;
-      }
-      if (b.amountSpent !== a.amountSpent) {
-        return b.amountSpent - a.amountSpent;
-      }
-      return b.numberOfTransaction - a.numberOfTransaction;
-    });
-
-  const myRank = filteredRecords.findIndex(r => r.memberId === member?.id) + 1;
-
-  const getRankBadge = (rank: number) => {
-    if (rank === 1) return "🥇";
-    if (rank === 2) return "🥈";
-    if (rank === 3) return "🥉";
-    return `#${rank}`;
-  };
-
   return (
     <div className="leaderboard-wrapper">
       <Navbar />
@@ -178,10 +277,15 @@ export default function LeaderboardPage() {
           <div className="lb-header">
             <h2>🏆 Leaderboard {new Date().toLocaleString('id-ID', { month: 'long', year: 'numeric' })}</h2>
             <p>Berkompetisi untuk mendapatkan voucher menarik!</p>
+            <div className="live-indicator">
+              <span className="live-dot" />
+              <span>LIVE</span>
+            </div>
           </div>
 
           {activePrograms.length > 0 && (
             <aside className="voucher-announcement" aria-label="Program voucher aktif">
+              <div className="announcement-shimmer" />
               <div className="announcement-badge">📢 Pengumuman</div>
               <h3 className="announcement-title">🎁 Program Voucher Aktif</h3>
               <p className="announcement-nudge">
@@ -192,7 +296,7 @@ export default function LeaderboardPage() {
                   <div key={prog.id} className="announcement-program-row">
                     <div className="announcement-program-main">
                       <span className="announcement-program-name">{prog.voucherName}</span>
-                      <span className="announcement-program-value">Rp{(prog.value || 0).toLocaleString("id-ID")}</span>
+                      <span className="announcement-program-value shine-blink-periodic">Rp{(prog.value || 0).toLocaleString("id-ID")}</span>
                     </div>
                     {(prog.threshold ?? 0) > 0 && (
                       <div className="announcement-points-needed">
@@ -236,23 +340,57 @@ export default function LeaderboardPage() {
               <div className="lb-empty">Belum ada data untuk kategori ini.</div>
             ) : (
               <div className="lb-list">
-                {filteredRecords.map((rec, idx) => (
-                  <div
-                    key={rec.memberId}
-                    className={`lb-item ${!isAdmin && rec.memberId === member?.id ? 'is-me' : ''} ${idx === 0 ? 'rank-gold' : idx === 1 ? 'rank-silver' : idx === 2 ? 'rank-bronze' : ''
-                      }`}
-                  >
-                    <div className="lb-rank">{getRankBadge(idx + 1)}</div>
-                    <div className="lb-name">
-                      <span>{rec.memberName}</span>
-                      {!isAdmin && rec.memberId === member?.id && <span className="me-badge">Kamu</span>}
+                {filteredRecords.map((rec, idx) => {
+                  const hasPointBump = animations.pointBump.has(rec.memberId);
+                  const hasRankUp = animations.rankUp.has(rec.memberId);
+                  const hasRankDown = animations.rankDown.has(rec.memberId);
+
+                  const animClasses = [
+                    hasPointBump ? "anim-point-bump" : "",
+                    hasRankUp ? "anim-rank-up" : "",
+                    hasRankDown ? "anim-rank-down" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ");
+
+                  return (
+                    <div
+                      key={rec.memberId}
+                      className={`lb-item ${!isAdmin && rec.memberId === member?.id ? 'is-me' : ''} ${idx === 0 ? 'rank-gold' : idx === 1 ? 'rank-silver' : idx === 2 ? 'rank-bronze' : ''
+                        } ${animClasses}`}
+                    >
+                      {/* Rank-up arrow indicator */}
+                      {hasRankUp && (
+                        <div className="rank-change-arrow up">▲</div>
+                      )}
+                      {hasRankDown && (
+                        <div className="rank-change-arrow down">▼</div>
+                      )}
+
+                      <div className="lb-rank">{getRankBadge(idx + 1)}</div>
+                      <div className="lb-name">
+                        <span>{rec.memberName}</span>
+                        {!isAdmin && rec.memberId === member?.id && <span className="me-badge">Kamu</span>}
+                      </div>
+                      <div className="lb-stats">
+                        <span className={`pts ${hasPointBump ? "pts-flash" : ""}`}>
+                          {rec.points} points
+                          {hasPointBump && <span className="plus-indicator">+</span>}
+                        </span>
+                        <span className="tx">{rec.numberOfTransaction} transaksi</span>
+                      </div>
+
+                      {/* Particle burst overlay for point bump */}
+                      {hasPointBump && (
+                        <div className="particle-burst">
+                          {[...Array(8)].map((_, i) => (
+                            <span key={i} className={`particle p-${i}`} />
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <div className="lb-stats">
-                      <span className="pts">{rec.points} points</span>
-                      <span className="tx">{rec.numberOfTransaction} transaksi</span>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -298,6 +436,35 @@ export default function LeaderboardPage() {
         .lb-header h2 { font-size: 1.8rem; }
         .lb-header p { opacity: 0.9; font-size: 1rem; }
         
+        /* ── Live indicator ── */
+        .live-indicator {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.4rem;
+          margin-top: 0.5rem;
+          padding: 0.3rem 0.8rem;
+          background: rgba(255, 255, 255, 0.15);
+          border: 1px solid rgba(255, 255, 255, 0.3);
+          border-radius: 999px;
+          font-size: 0.7rem;
+          font-weight: 800;
+          letter-spacing: 0.12em;
+          color: #fff;
+          text-transform: uppercase;
+        }
+        .live-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: #4ade80;
+          box-shadow: 0 0 6px 2px rgba(74, 222, 128, 0.6);
+          animation: livePulse 1.5s ease-in-out infinite;
+        }
+        @keyframes livePulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.5; transform: scale(0.7); }
+        }
+
         .category-tabs {
           display: flex;
           background: rgba(255,255,255,0.1);
@@ -340,6 +507,11 @@ export default function LeaderboardPage() {
           padding: 1.2rem 1.5rem;
           border-bottom: 1px solid #eee;
           gap: 1rem;
+          position: relative;
+          overflow: hidden;
+          transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1),
+                      background 0.4s ease,
+                      box-shadow 0.4s ease;
         }
         .lb-item:last-child { border-bottom: none; }
         .lb-item.is-me {
@@ -404,11 +576,135 @@ export default function LeaderboardPage() {
           font-weight: 700;
           color: #C51720;
           font-size: 1.1rem;
+          position: relative;
+          transition: transform 0.3s ease;
         }
         .lb-stats .tx {
           font-size: 0.85rem;
           color: #8d6e63;
         }
+
+        /* ── Point Bump Animation ── */
+        .anim-point-bump {
+          animation: pointBumpCard 1.6s ease-out;
+        }
+        @keyframes pointBumpCard {
+          0% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
+          15% {
+            box-shadow: 0 0 0 4px rgba(74, 222, 128, 0.5),
+                        0 0 24px 8px rgba(74, 222, 128, 0.25);
+            transform: scale(1.015);
+          }
+          40% {
+            box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.3),
+                        0 0 16px 4px rgba(74, 222, 128, 0.15);
+            transform: scale(1.005);
+          }
+          100% {
+            box-shadow: 0 0 0 0 rgba(74, 222, 128, 0);
+            transform: scale(1);
+          }
+        }
+
+        .pts-flash {
+          animation: ptsFlash 1.2s ease-out;
+        }
+        @keyframes ptsFlash {
+          0% { transform: scale(1); color: #C51720; }
+          20% { transform: scale(1.25); color: #16a34a; }
+          50% { transform: scale(1.1); color: #16a34a; }
+          100% { transform: scale(1); color: #C51720; }
+        }
+
+        .plus-indicator {
+          position: absolute;
+          right: -16px;
+          top: -4px;
+          font-size: 0.8rem;
+          font-weight: 900;
+          color: #16a34a;
+          animation: plusFloat 1.2s ease-out forwards;
+        }
+        @keyframes plusFloat {
+          0% { opacity: 1; transform: translateY(0); }
+          100% { opacity: 0; transform: translateY(-18px); }
+        }
+
+        /* ── Particle burst ── */
+        .particle-burst {
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .particle {
+          position: absolute;
+          width: 5px;
+          height: 5px;
+          border-radius: 50%;
+          background: #4ade80;
+          animation: particleFly 1s ease-out forwards;
+          opacity: 0;
+        }
+        .p-0 { animation-delay: 0s;    --px: -30px; --py: -20px; background: #fbbf24; }
+        .p-1 { animation-delay: 0.05s; --px: 30px;  --py: -25px; background: #4ade80; }
+        .p-2 { animation-delay: 0.1s;  --px: -20px; --py: 20px;  background: #f87171; }
+        .p-3 { animation-delay: 0.08s; --px: 25px;  --py: 18px;  background: #60a5fa; }
+        .p-4 { animation-delay: 0.03s; --px: -35px; --py: -5px;  background: #fbbf24; }
+        .p-5 { animation-delay: 0.12s; --px: 35px;  --py: 5px;   background: #a78bfa; }
+        .p-6 { animation-delay: 0.07s; --px: -10px; --py: -30px; background: #34d399; }
+        .p-7 { animation-delay: 0.09s; --px: 15px;  --py: 28px;  background: #fb923c; }
+        @keyframes particleFly {
+          0% { opacity: 1; transform: translate(0, 0) scale(1); }
+          70% { opacity: 0.8; transform: translate(var(--px), var(--py)) scale(1.2); }
+          100% { opacity: 0; transform: translate(calc(var(--px) * 1.5), calc(var(--py) * 1.5)) scale(0); }
+        }
+
+        /* ── Rank Up Animation ── */
+        .anim-rank-up {
+          animation: rankSlideUp 0.8s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        @keyframes rankSlideUp {
+          0% { transform: translateY(40px); opacity: 0.4; }
+          60% { transform: translateY(-4px); opacity: 1; }
+          100% { transform: translateY(0); opacity: 1; }
+        }
+
+        /* ── Rank Down Animation ── */
+        .anim-rank-down {
+          animation: rankSlideDown 0.8s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        @keyframes rankSlideDown {
+          0% { transform: translateY(-40px); opacity: 0.4; }
+          60% { transform: translateY(4px); opacity: 1; }
+          100% { transform: translateY(0); opacity: 1; }
+        }
+
+        /* ── Rank change arrow indicators ── */
+        .rank-change-arrow {
+          position: absolute;
+          left: 6px;
+          font-size: 0.6rem;
+          font-weight: 900;
+          pointer-events: none;
+          animation: arrowFade 1.6s ease-out forwards;
+        }
+        .rank-change-arrow.up {
+          top: 4px;
+          color: #16a34a;
+        }
+        .rank-change-arrow.down {
+          bottom: 4px;
+          color: #dc2626;
+        }
+        @keyframes arrowFade {
+          0% { opacity: 1; }
+          70% { opacity: 1; }
+          100% { opacity: 0; }
+        }
+
         .my-rank-summary {
           text-align: center;
           background: white;
@@ -443,6 +739,31 @@ export default function LeaderboardPage() {
             0 0 0 1px rgba(255, 193, 7, 0.5),
             0 8px 28px rgba(197, 23, 32, 0.12),
             0 2px 0 rgba(255, 255, 255, 0.6) inset;
+          position: relative;
+          overflow: hidden;
+        }
+        .announcement-shimmer {
+          position: absolute;
+          top: 0;
+          left: -100%;
+          width: 60%;
+          height: 100%;
+          background: linear-gradient(
+            90deg,
+            transparent 0%,
+            rgba(255, 248, 200, 0.55) 35%,
+            rgba(255, 215, 0, 0.3) 50%,
+            rgba(255, 248, 200, 0.55) 65%,
+            transparent 100%
+          );
+          animation: announcementShimmer 4s ease-in-out infinite;
+          pointer-events: none;
+          z-index: 1;
+        }
+        @keyframes announcementShimmer {
+          0% { left: -100%; }
+          50% { left: 100%; }
+          100% { left: 100%; }
         }
         .announcement-badge {
           display: inline-block;
@@ -517,6 +838,14 @@ export default function LeaderboardPage() {
           font-size: 1.05rem;
           color: #C51720;
           white-space: nowrap;
+          display: inline-block;
+        }
+        .shine-blink-periodic {
+          animation: textShinePeriodic 4s ease-in-out infinite;
+        }
+        @keyframes textShinePeriodic {
+          0%, 20%, 100% { text-shadow: 0 0 0 rgba(255,215,0,0); transform: scale(1); }
+          10% { text-shadow: 0 0 15px rgba(255,215,0,0.8), 0 0 25px rgba(255,223,0,0.5); transform: scale(1.1); }
         }
         .announcement-program-foot {
           display: flex;

@@ -20,7 +20,6 @@ export default function OrderPage() {
   const [recommendedOrder, setRecommendedOrder] = useState<string[]>([]);
   const [recommendedLimit, setRecommendedLimit] = useState<number>(6);
   const [loadingMenu, setLoadingMenu] = useState(true);
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [addedItems, setAddedItems] = useState<Set<string>>(new Set());
 
   // Drawer State
@@ -129,13 +128,7 @@ export default function OrderPage() {
     return groups;
   }, [menuItems, categoryOrder]);
 
-  const toggleCategory = (cat: string) => {
-    setExpandedCategories((prev) => {
-      const next = new Set(prev);
-      next.has(cat) ? next.delete(cat) : next.add(cat);
-      return next;
-    });
-  };
+
 
   const handleItemClick = (item: MenuItem) => {
     const itemGroups = optionGroups.filter(g =>
@@ -284,23 +277,14 @@ export default function OrderPage() {
 
           {/* ── Categorised Sections ── */}
           {categorisedGroups.map(({ category, items }) => {
-            const isExpanded = expandedCategories.has(category);
-            const displayed = isExpanded ? items : items.slice(0, 3);
-            const hasMore = items.length > 3;
-
             return (
               <section key={`cat-${category}`} className="menu-section">
                 <div className="section-title-row">
                   <h2 className="section-title">{category}</h2>
-                  {hasMore && (
-                    <button className="see-all-btn" onClick={() => toggleCategory(category)}>
-                      {isExpanded ? "Sembunyikan ▲" : "Lihat selengkapnya ▼"}
-                    </button>
-                  )}
                 </div>
 
                 <div className="category-list">
-                  {displayed.map((item) => {
+                  {items.map((item) => {
                     const basketInstances = basket.filter(b => b.menuItem.id === item.id);
                     const quantity = basketInstances.reduce((sum, b) => sum + b.dineInQuantity + b.takeAwayQuantity, 0);
                     
@@ -432,8 +416,7 @@ export default function OrderPage() {
         .menu-section { margin-bottom: 2rem; }
         .section-title-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
         .section-title { font-size: 1.15rem; font-weight: 800; color: #2d241d; text-transform: capitalize; }
-        .see-all-btn { background: none; border: none; color: #C51720; font-size: 0.9rem; font-weight: 700; padding: 0; cursor: pointer; font-family: inherit; }
-        .see-all-btn:hover { text-decoration: underline; }
+
         .recommended-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.85rem; }
         .category-list { display: flex; flex-direction: column; }
         
