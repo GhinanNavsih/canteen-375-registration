@@ -194,8 +194,8 @@ export default function LeaderboardPage() {
     })
     .sort((a, b) => {
       if (b.points !== a.points) return b.points - a.points;
-      if (b.amountSpent !== a.amountSpent) return b.amountSpent - a.amountSpent;
-      return b.numberOfTransaction - a.numberOfTransaction;
+      if (b.numberOfTransaction !== a.numberOfTransaction) return b.numberOfTransaction - a.numberOfTransaction;
+      return b.amountSpent - a.amountSpent;
     });
 
   // Trigger animation detection whenever filteredRecords changes
@@ -372,6 +372,10 @@ export default function LeaderboardPage() {
                         <span>{rec.memberName}</span>
                         {!isAdmin && rec.memberId === member?.id && <span className="me-badge">Kamu</span>}
                       </div>
+
+                      {idx === 0 && <span className="prize-badge gold">Rp50.000</span>}
+                      {idx === 1 && <span className="prize-badge silver">Rp25.000</span>}
+                      {idx === 2 && <span className="prize-badge bronze">Rp15.000</span>}
                       <div className="lb-stats">
                         <span className={`pts ${hasPointBump ? "pts-flash" : ""}`}>
                           {rec.points} points
@@ -435,6 +439,20 @@ export default function LeaderboardPage() {
         }
         .lb-header h2 { font-size: 1.8rem; }
         .lb-header p { opacity: 0.9; font-size: 1rem; }
+
+        /* ── Prize Badges in List ── */
+        .prize-badge {
+          padding: 0.35rem 0.8rem;
+          border-radius: 20px;
+          font-size: 0.75rem;
+          font-weight: 800;
+          white-space: nowrap;
+          color: white;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .prize-badge.gold { background: #EFBF04; }
+        .prize-badge.silver { background: #C0C0C0; }
+        .prize-badge.bronze { background: #a1795a; }
         
         /* ── Live indicator ── */
         .live-indicator {

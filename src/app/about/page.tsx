@@ -43,7 +43,7 @@ export default function AboutPage() {
                     <span className="prize-desc">Poin tertinggi bulan ini</span>
                   </div>
                 </div>
-                <span className="prize-badge gold">Rp25.000</span>
+                <span className="prize-badge gold">Rp50.000</span>
               </div>
 
               <div className="prize-item">
@@ -54,7 +54,7 @@ export default function AboutPage() {
                     <span className="prize-desc">Poin tertinggi kedua</span>
                   </div>
                 </div>
-                <span className="prize-badge silver">Rp15.000</span>
+                <span className="prize-badge silver">Rp25.000</span>
               </div>
 
               <div className="prize-item">
@@ -65,7 +65,7 @@ export default function AboutPage() {
                     <span className="prize-desc">Poin tertinggi ketiga</span>
                   </div>
                 </div>
-                <span className="prize-badge bronze">Rp10.000</span>
+                <span className="prize-badge bronze">Rp15.000</span>
               </div>
             </div>
 

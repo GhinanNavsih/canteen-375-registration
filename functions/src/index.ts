@@ -194,17 +194,26 @@ export const distributeMonthlyRewards = onSchedule(
                 if (!memberData) continue;
                 const category = memberData.category || "Umum";
                 const points = (stats as any).customerPoints || 0;
+                const numberOfTransaction = (stats as any).numberOfTransaction || 0;
+                const amountSpent = (stats as any).amountSpent || 0;
+                
                 if (points > 0) {
                     if (!categoriesMap.has(category)) categoriesMap.set(category, []);
                     categoriesMap.get(category)!.push({
                         id: memberId,
                         name: memberData.fullName || memberData.name || "Member",
                         points: points,
+                        numberOfTransaction: numberOfTransaction,
+                        amountSpent: amountSpent,
                     });
                 }
             }
 
-            const prizes = [25000, 15000, 10000];
+            // New prizes apply starting from May 2026 (distributed in June)
+            // Anything before May 2026 (e.g., April) uses the old prizes.
+            const prizes = prevMonthStr >= "2026-05" 
+                ? [50000, 25000, 15000] 
+                : [25000, 15000, 10000];
             const batch = db.batch();
             const currentMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
@@ -219,7 +228,11 @@ export const distributeMonthlyRewards = onSchedule(
             };
 
             for (const [category, participants] of categoriesMap.entries()) {
-                participants.sort((a, b) => b.points - a.points);
+                participants.sort((a, b) => {
+                    if (b.points !== a.points) return b.points - a.points;
+                    if (b.numberOfTransaction !== a.numberOfTransaction) return b.numberOfTransaction - a.numberOfTransaction;
+                    return b.amountSpent - a.amountSpent;
+                });
                 const winners = participants.slice(0, 3);
                 winners.forEach((winner, index) => {
                     const rank = index + 1;

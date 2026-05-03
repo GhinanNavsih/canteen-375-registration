@@ -142,8 +142,8 @@ export default function DashboardPage() {
 
     const sorted = records.sort((a, b) => {
       if (b.points !== a.points) return b.points - a.points;
-      if (b.amountSpent !== a.amountSpent) return b.amountSpent - a.amountSpent;
-      return b.numberOfTransaction - a.numberOfTransaction;
+      if (b.numberOfTransaction !== a.numberOfTransaction) return b.numberOfTransaction - a.numberOfTransaction;
+      return b.amountSpent - a.amountSpent;
     });
 
     const rank = sorted.findIndex(r => r.memberId === targetId) + 1;
