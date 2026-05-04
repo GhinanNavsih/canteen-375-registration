@@ -332,7 +332,7 @@ export default function BasketPage() {
               <div key={cartItemId} className="basket-item">
                 <div
                   className="basket-item-flex"
-                  onClick={() => handleEditOpen({ cartItemId, menuItem, dineInQuantity, takeAwayQuantity, selectedOptions })}
+                  onClick={() => handleEditOpen({ cartItemId, menuItem, dineInQuantity, takeAwayQuantity, selectedOptions, customerNote })}
                 >
                   {/* Left: Image */}
                   <img
