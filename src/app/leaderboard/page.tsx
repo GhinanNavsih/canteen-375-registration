@@ -34,7 +34,19 @@ export default function LeaderboardPage() {
   const prevRankMapRef = useRef<Map<string, number>>(new Map());
   const isFirstLoadRef = useRef(true);
 
-  const currentMonth = new Date().toISOString().slice(0, 7); // yyyy-mm
+  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7)); // yyyy-mm
+  const currentMonth = new Date().toISOString().slice(0, 7);
+
+  // Generate list of months for history (starting from April 2026)
+  const historyMonths: string[] = [];
+  const startMonth = new Date("2026-04-01");
+  let tempDate = new Date(); 
+  tempDate.setDate(1);
+
+  while (tempDate >= startMonth) {
+    historyMonths.push(tempDate.toISOString().slice(0, 7));
+    tempDate.setMonth(tempDate.getMonth() - 1);
+  }
 
   useEffect(() => {
     if (member?.category) {
@@ -71,9 +83,9 @@ export default function LeaderboardPage() {
       }
     );
 
-    // Listener 2: Competition records document for the current month
+    // Listener 2: Competition records document for the selected month
     const unsubCompetition = onSnapshot(
-      doc(db, "competitionRecords", currentMonth),
+      doc(db, "competitionRecords", selectedMonth),
       (snap) => {
         if (snap.exists()) {
           const data = snap.data();
@@ -105,7 +117,7 @@ export default function LeaderboardPage() {
       unsubMembers();
       unsubCompetition();
     };
-  }, [sessionLoading, firebaseUser, currentMonth]);
+  }, [sessionLoading, firebaseUser, selectedMonth]);
 
   // Active voucher campaigns (already real-time)
   useEffect(() => {
@@ -224,19 +236,21 @@ export default function LeaderboardPage() {
 
   if (!firebaseUser) {
     return (
-      <div className="leaderboard-wrapper">
-        <Navbar />
-        <main className="leaderboard-main">
-          <div className="leaderboard-container animate-fade-in">
-            <div className="lb-guest-card">
-              <h2>Papan peringkat</h2>
-              <p>Silakan masuk untuk melihat leaderboard dan program voucher.</p>
-              <Link href="/login?redirect=/leaderboard" className="lb-login-btn">
-                Masuk
-              </Link>
+      <>
+        <div className="leaderboard-wrapper">
+          <Navbar />
+          <main className="leaderboard-main">
+            <div className="leaderboard-container animate-fade-in">
+              <div className="lb-guest-card">
+                <h2>Papan peringkat</h2>
+                <p>Silakan masuk untuk melihat leaderboard dan program voucher.</p>
+                <Link href="/login?redirect=/leaderboard" className="lb-login-btn">
+                  Masuk
+                </Link>
+              </div>
             </div>
-          </div>
-        </main>
+          </main>
+        </div>
         <style jsx>{`
           .leaderboard-wrapper { min-height: 100vh; background: #C51720; }
           .leaderboard-main {
@@ -268,7 +282,7 @@ export default function LeaderboardPage() {
             text-decoration: none;
           }
         `}</style>
-      </div>
+      </>
     );
   }
 
@@ -337,6 +351,14 @@ export default function LeaderboardPage() {
           </div>
 
           <div className="lb-card">
+            <div className="lb-month-indicator">
+              📅 {selectedMonth === currentMonth ? "Kompetisi Bulan Ini" : `Arsip Kompetisi: ${selectedMonth}`}
+              {selectedMonth !== currentMonth && (
+                <button onClick={() => setSelectedMonth(currentMonth)} className="btn-back-current">
+                  Kembali ke Sekarang
+                </button>
+              )}
+            </div>
             {loading ? (
               <div className="lb-loading">Memuat peringkat...</div>
             ) : filteredRecords.length === 0 ? (
@@ -407,6 +429,28 @@ export default function LeaderboardPage() {
               <p>Posisi kamu saat ini: <strong>Peringkat {myRank}</strong></p>
             </div>
           )}
+
+          {/* ─── Competition History Section ─── */}
+          <div className="history-section">
+            <div className="history-card">
+              <h3>📜 Riwayat Kompetisi</h3>
+              <p>Lihat hasil kompetisi bulan-bulan sebelumnya.</p>
+              <div className="history-picker">
+                <label htmlFor="month-select">Pilih Bulan:</label>
+                <select 
+                  id="month-select" 
+                  value={selectedMonth} 
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                >
+                  {historyMonths.map(m => {
+                    const date = new Date(m + "-01");
+                    const label = date.toLocaleDateString("id-ID", { month: "long", year: "numeric" });
+                    return <option key={m} value={m}>{label}</option>;
+                  })}
+                </select>
+              </div>
+            </div>
+          </div>
         </div>
       </main>
 
@@ -880,6 +924,73 @@ export default function LeaderboardPage() {
         .announcement-expire {
           font-style: italic;
           color: #a1887f;
+        }
+
+        /* History Section */
+        .history-section {
+          margin-top: 2rem;
+          padding-bottom: 2rem;
+        }
+        .history-card {
+          background: white;
+          border-radius: 20px;
+          padding: 1.5rem;
+          border: 1.5px solid #000;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        }
+        .history-card h3 {
+          font-size: 1.1rem;
+          font-weight: 800;
+          color: #2d241d;
+          margin-bottom: 0.5rem;
+        }
+        .history-card p {
+          font-size: 0.85rem;
+          color: #8d6e63;
+          margin-bottom: 1rem;
+        }
+        .history-picker {
+          display: flex;
+          align-items: center;
+          gap: 1rem;
+        }
+        .history-picker label {
+          font-size: 0.9rem;
+          font-weight: 700;
+          color: #5d4037;
+        }
+        .history-picker select {
+          padding: 0.6rem 1rem;
+          border-radius: 10px;
+          border: 1.5px solid #d4a373;
+          background: #faf7f2;
+          font-family: inherit;
+          font-size: 0.9rem;
+          color: #2d241d;
+          cursor: pointer;
+          flex: 1;
+        }
+
+        .lb-month-indicator {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 0.75rem 1rem;
+          background: #fdf5e6;
+          border-bottom: 1px solid #eee;
+          font-size: 0.85rem;
+          font-weight: 700;
+          color: #8b4513;
+        }
+        .btn-back-current {
+          background: #C51720;
+          color: white;
+          border: none;
+          padding: 0.35rem 0.75rem;
+          border-radius: 6px;
+          font-size: 0.75rem;
+          font-weight: 700;
+          cursor: pointer;
         }
       `}</style>
     </div>

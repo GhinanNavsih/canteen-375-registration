@@ -137,6 +137,15 @@ service cloud.firestore {
       allow write: if isAuthenticated();
     }
 
+    // ── SELF ORDERS (ROOT COLLECTION) ─────────────────────────────────────────
+    match /SelfOrders/{orderId} {
+      allow read: if isAdmin()
+                    || (isAuthenticated() && memberIdRefersToAuthUser(resource.data.memberId));
+      allow create: if isAuthenticated()
+                      && memberIdRefersToAuthUser(request.resource.data.memberId);
+      allow update, delete: if isAdmin();
+    }
+
     // ── FEEDBACKS ─────────────────────────────────────────────────────────────
     match /feedbacks/{feedbackId} {
       allow create: if isAuthenticated()

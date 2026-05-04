@@ -46,6 +46,7 @@ export interface BasketItem {
   dineInQuantity: number;
   takeAwayQuantity: number;
   selectedOptions: SelectedOption[];
+  customerNote: string;
 }
 
 export interface SelfOrder {

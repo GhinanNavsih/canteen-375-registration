@@ -25,6 +25,7 @@ export default function OrderPage() {
   // Drawer State
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
   const [selectedOptionsMap, setSelectedOptionsMap] = useState<Record<string, SelectedOption[]>>({});
+  const [customerNote, setCustomerNote] = useState("");
 
   // Fetch menu and config from Firestore
   useEffect(() => {
@@ -32,16 +33,18 @@ export default function OrderPage() {
       try {
         // 1. Fetch items
         const snap = await getDocs(collection(db, "Canteens", "canteen375", "MenuCollection"));
-        const items = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            ...data,
-            id: d.id,
-            category: (data.category && typeof data.category === 'string' && data.category.trim() !== '')
-              ? data.category
-              : "Lainnya"
-          } as MenuItem;
-        });
+        const items = snap.docs
+          .map((d) => {
+            const data = d.data();
+            return {
+              ...data,
+              id: d.id,
+              category: (data.category && typeof data.category === 'string' && data.category.trim() !== '')
+                ? data.category
+                : "Lainnya"
+            } as MenuItem;
+          })
+          .filter(item => item.showMenu !== false);
 
         // 2. Fetch category order
         const configSnap = await getDoc(doc(db, "Canteens", "canteen375", "Metadata", "MenuConfig"));
@@ -139,6 +142,7 @@ export default function OrderPage() {
       // Open customization drawer
       setSelectedItem(item);
       setSelectedOptionsMap({}); // Reset options
+      setCustomerNote(""); // Reset note
     } else {
       // Direct add
       handleAdd(item);
@@ -225,8 +229,17 @@ export default function OrderPage() {
   const confirmModalAdd = () => {
     if (!selectedItem || !isModalValid) return;
     const compiledOptions = Object.values(selectedOptionsMap).flat();
-    handleAdd(selectedItem, compiledOptions);
+    addToBasket(selectedItem, compiledOptions, customerNote);
+    setAddedItems((prev) => new Set(prev).add(selectedItem.id));
+    setTimeout(() => {
+      setAddedItems((prev) => {
+        const next = new Set(prev);
+        next.delete(selectedItem.id);
+        return next;
+      });
+    }, 800);
     setSelectedItem(null);
+    setCustomerNote("");
   };
 
   const formatPrice = (price: number) => `Rp${(price || 0).toLocaleString("id-ID")}`;
@@ -287,7 +300,7 @@ export default function OrderPage() {
                   {items.map((item) => {
                     const basketInstances = basket.filter(b => b.menuItem.id === item.id);
                     const quantity = basketInstances.reduce((sum, b) => sum + b.dineInQuantity + b.takeAwayQuantity, 0);
-                    
+
                     return (
                       <div key={`list-${item.id}`} onClick={() => handleItemClick(item)} style={{ cursor: 'pointer' }}>
                         <MenuListItem
@@ -325,9 +338,9 @@ export default function OrderPage() {
           {selectedItem && (
             <>
               <div className="drawer-image-section">
-                <img 
-                  src={selectedItem.imagePath || "/Logo Canteen 375 (2).png"} 
-                  alt={selectedItem.namaMenu} 
+                <img
+                  src={selectedItem.imagePath || "/Logo Canteen 375 (2).png"}
+                  alt={selectedItem.namaMenu}
                   className="drawer-hero-img"
                   onError={(e) => { (e.target as HTMLImageElement).src = "/Logo Canteen 375 (2).png"; }}
                 />
@@ -340,6 +353,20 @@ export default function OrderPage() {
               </div>
 
               <div className="drawer-scroll-area">
+                {/* ── Customer Note ── */}
+                <div className="customer-note-section">
+                  <label className="note-label" htmlFor="customer-note">📝 Catatan untuk dapur</label>
+                  <textarea
+                    id="customer-note"
+                    className="note-textarea"
+                    placeholder="Contoh: tanpa garam, tidak pedas..."
+                    value={customerNote}
+                    onChange={(e) => setCustomerNote(e.target.value)}
+                    rows={2}
+                    maxLength={120}
+                  />
+                </div>
+
                 {activeItemGroups.map(group => {
                   const currentSelections = selectedOptionsMap[group.id] || [];
                   const isSatisfied = group.selectionRule === "optional" ||
@@ -504,6 +531,40 @@ export default function OrderPage() {
           background: white;
         }
         .drawer-scroll-area::-webkit-scrollbar { display: none; }
+
+        .customer-note-section {
+          margin-bottom: 1.5rem;
+          padding-bottom: 1.5rem;
+          border-bottom: 1.5px solid #f0ede8;
+        }
+        .note-label {
+          display: block;
+          font-size: 0.9rem;
+          font-weight: 700;
+          color: #5d4037;
+          margin-bottom: 0.5rem;
+        }
+        .note-textarea {
+          width: 100%;
+          border: 1.5px solid #d4a373;
+          border-radius: 12px;
+          padding: 0.75rem;
+          font-family: inherit;
+          font-size: 0.9rem;
+          color: #2d241d;
+          background: #faf7f2;
+          resize: none;
+          box-sizing: border-box;
+          transition: border-color 0.2s, box-shadow 0.2s;
+          line-height: 1.45;
+        }
+        .note-textarea:focus {
+          outline: none;
+          border-color: #C51720;
+          box-shadow: 0 0 0 3px rgba(197, 23, 32, 0.1);
+          background: #fff;
+        }
+        .note-textarea::placeholder { color: #bfb0a5; }
 
         .option-group-section { margin-bottom: 2rem; }
         .og-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }

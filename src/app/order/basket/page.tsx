@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { collection, doc, addDoc, serverTimestamp, getDocs, getDoc, runTransaction } from "firebase/firestore";
+import { collection, doc, getDocs, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useMember } from "@/context/MemberContext";
 import { useBasket } from "@/context/BasketContext";
@@ -11,10 +11,10 @@ import { MenuItem, OptionGroup, SelectedOption, BasketItem } from "@/types/menu"
 
 export default function BasketPage() {
   const { member } = useMember();
-  const { basket, totalPrice, totalItems, addToBasket, editBasketItem, updateQuantity, removeFromBasket, clearBasket } = useBasket();
+  const { basket, totalPrice, totalItems, addToBasket, editBasketItem, updateQuantity, updateNote, removeFromBasket, clearBasket } = useBasket();
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
-  const [orderSuccess, setOrderSuccess] = useState<{ customerNumber: number } | null>(null);
+  const [orderSuccess, setOrderSuccess] = useState<{ orderCode: string } | null>(null);
 
   // Cross-selling state
   const [crossSellItems, setCrossSellItems] = useState<MenuItem[]>([]);
@@ -24,6 +24,7 @@ export default function BasketPage() {
   const [optionGroups, setOptionGroups] = useState<OptionGroup[]>([]);
   const [editingItem, setEditingItem] = useState<BasketItem | null>(null);
   const [selectedOptionsMap, setSelectedOptionsMap] = useState<Record<string, SelectedOption[]>>({});
+  const [noteEditingItem, setNoteEditingItem] = useState<{ id: string, note: string } | null>(null);
 
   // Take-away Fee Logic
   // Every 4 slots occupied = Rp 1.000 (1-3 free, 4 adds Rp1k)
@@ -97,15 +98,13 @@ export default function BasketPage() {
     setSubmitting(true);
 
     try {
-      // Atomically increment the customer number counter
-      const counterRef = doc(db, "Canteens", "canteen375", "Metadata", "SelfOrderCounter");
-      const customerNumber = await runTransaction(db, async (transaction) => {
-        const counterSnap = await transaction.get(counterRef);
-        const current = counterSnap.exists() ? counterSnap.data().current : 0;
-        const next = current + 1;
-        transaction.set(counterRef, { current: next });
-        return next;
-      });
+      // Generate a unique 4-character alphanumeric order code
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+      let orderCode = "";
+      for (let i = 0; i < 4; i++) {
+        orderCode += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      const docId = `SO_${orderCode}`;
 
       const orderItems = basket
         .filter(b => (b.dineInQuantity + b.takeAwayQuantity) > 0)
@@ -114,27 +113,35 @@ export default function BasketPage() {
           harga: b.menuItem.harga + b.selectedOptions.reduce((acc, o) => acc + o.priceAdjustment, 0),
           isMakanan: b.menuItem.isMakanan,
           dineInQuantity: b.dineInQuantity,
+          dineInPreparedQuantity: 0,
           takeAwayQuantity: b.takeAwayQuantity,
+          takeAwayPreparedQuantity: 0,
           selectedOptions: b.selectedOptions,
+          customerNote: b.customerNote || "",
+          status: "",
         }));
 
-      await addDoc(collection(db, "Canteens", "canteen375", "SelfOrders"), {
+      const subTotal = totalPrice;
+
+      await setDoc(doc(db, "SelfOrders", docId), {
         canteenId: "canteen375_plazaUnipdu",
-        customerNumber,
+        orderCode,
         namaCustomer: member.fullName,
         isMember: true,
         customerPhone: member.phoneNumber || "",
         memberId: member.uid || member.id,
         orderItems,
-        status: "Serving",
-        total: totalPrice + takeAwayFee,
-        transactionMethod: "Self Order",
+        status: "Pending",
+        subTotal,
+        takeAwayFee,
+        total: subTotal + takeAwayFee,
+        transactionMethod: "SelfOrder",
         waktuPengambilan: "Tidak Memesan",
         waktuPesan: serverTimestamp(),
       });
 
       clearBasket();
-      setOrderSuccess({ customerNumber });
+      setOrderSuccess({ orderCode });
     } catch (err) {
       console.error("Error placing order:", err);
     } finally {
@@ -218,8 +225,43 @@ export default function BasketPage() {
   const confirmModalEdit = () => {
     if (!editingItem || !isModalValid) return;
     const compiledOptions = Object.values(selectedOptionsMap).flat();
-    editBasketItem(editingItem.cartItemId, compiledOptions);
+
+    if (editingItem.cartItemId === 'TEMP_ADD') {
+      addToBasket(editingItem.menuItem, compiledOptions);
+    } else {
+      editBasketItem(editingItem.cartItemId, compiledOptions);
+    }
+
     setEditingItem(null);
+  };
+
+  const handleCrossSellAdd = (item: MenuItem) => {
+    const itemGroups = optionGroups.filter(g =>
+      g.linkedItemIds.includes(item.id) ||
+      (g.linkedMenuItems || []).includes(item.namaMenu)
+    );
+
+    if (itemGroups.length > 0) {
+      setEditingItem({
+        cartItemId: 'TEMP_ADD',
+        menuItem: item,
+        dineInQuantity: 1,
+        takeAwayQuantity: 0,
+        selectedOptions: [],
+        customerNote: ""
+      });
+      setSelectedOptionsMap({});
+    } else {
+      addToBasket(item);
+      setAddedCrossItems(prev => new Set(prev).add(item.id));
+      setTimeout(() => {
+        setAddedCrossItems(prev => {
+          const next = new Set(prev);
+          next.delete(item.id);
+          return next;
+        });
+      }, 800);
+    }
   };
 
   // ── Order placed success screen ──
@@ -231,9 +273,9 @@ export default function BasketPage() {
           <div className="success-card">
             <div className="success-icon">✅</div>
             <h2>Pesanan Masuk!</h2>
-            <p>Nomor antrian kamu:</p>
-            <div className="short-code">{orderSuccess.customerNumber}</div>
-            <p className="success-sub">Kasir akan menyiapkan pesananmu segera.</p>
+            <p>Kode pesanan kamu:</p>
+            <div className="short-code">{orderSuccess.orderCode}</div>
+            <p className="success-sub">Tunjukkan kode ini ke kasir. Pesananmu segera disiapkan!</p>
             <button className="btn-back" onClick={() => router.push("/order")}>
               Pesan Lagi
             </button>
@@ -281,13 +323,14 @@ export default function BasketPage() {
       <div className="basket-content">
         {/* ── Order items list ── */}
         <div className="items-list">
-          {basket.map(({ cartItemId, menuItem, dineInQuantity, takeAwayQuantity, selectedOptions }) => {
+          {basket.map((b) => {
+            const { cartItemId, menuItem, dineInQuantity, takeAwayQuantity, selectedOptions, customerNote } = b;
             const optionsPrice = selectedOptions.reduce((sum, opt) => sum + opt.priceAdjustment, 0);
             const itemBasePrice = menuItem.harga + optionsPrice;
 
             return (
               <div key={cartItemId} className="basket-item">
-                <div 
+                <div
                   className="basket-item-flex"
                   onClick={() => handleEditOpen({ cartItemId, menuItem, dineInQuantity, takeAwayQuantity, selectedOptions })}
                 >
@@ -312,7 +355,18 @@ export default function BasketPage() {
                         ))}
                       </div>
                     )}
-                    <span className="item-price-tag">{formatPrice(itemBasePrice * (dineInQuantity + takeAwayQuantity))}</span>
+                    <div className="item-price-tag">{formatPrice(itemBasePrice * (dineInQuantity + takeAwayQuantity))}</div>
+                    <button
+                      className="add-note-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setNoteEditingItem({ id: cartItemId, note: customerNote || "" });
+                      }}
+                    >
+                      {customerNote
+                        ? `📝 ${customerNote.length > 25 ? customerNote.substring(0, 25) + '...' : customerNote}`
+                        : '+ Tambah Catatan'}
+                    </button>
                   </div>
 
                   {/* Mid-Right: Stacked Qty Controls */}
@@ -333,10 +387,10 @@ export default function BasketPage() {
                         <button className="pill-btn" onClick={() => updateQuantity(cartItemId, "takeAway", 1)}>+</button>
                       </div>
                     </div>
-                    
+
                     {(dineInQuantity + takeAwayQuantity === 0) && (
-                      <button 
-                        className="btn-delete-item" 
+                      <button
+                        className="btn-delete-item"
                         onClick={(e) => { e.stopPropagation(); removeFromBasket(cartItemId); }}
                       >
                         Hapus
@@ -362,17 +416,7 @@ export default function BasketPage() {
                       <img src={item.imagePath || "/Logo Canteen 375 (2).png"} alt={item.namaMenu} className="cs-image" onError={e => e.currentTarget.src = "/Logo Canteen 375 (2).png"} />
                       <button
                         className={`cs-add-btn ${added ? 'added' : ''}`}
-                        onClick={() => {
-                          addToBasket(item);
-                          setAddedCrossItems(prev => new Set(prev).add(item.id));
-                          setTimeout(() => {
-                            setAddedCrossItems(prev => {
-                              const next = new Set(prev);
-                              next.delete(item.id);
-                              return next;
-                            });
-                          }, 800);
-                        }}
+                        onClick={() => handleCrossSellAdd(item)}
                       >
                         {added ? "✓" : "+"}
                       </button>
@@ -447,29 +491,43 @@ export default function BasketPage() {
         .basket-page { min-height: 100vh; background: #fff; }
         .basket-header {
           background: white;
-          padding: 1rem 1.5rem;
+          padding: 0.75rem 0.75rem;
           display: flex;
           align-items: center;
-          gap: 1rem;
+          gap: 0.75rem;
           border-bottom: 1.5px solid #ece8e3;
           box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+          position: sticky;
+          top: 0;
+          z-index: 100;
         }
         .back-btn {
-          background: none;
+          background: #C51720;
           border: none;
-          font-size: 1rem;
-          font-weight: 700;
-          color: #C51720;
+          font-size: 0.75rem;
+          font-weight: 650;
+          color: white;
           cursor: pointer;
           font-family: inherit;
-          padding: 0;
+          padding: 0.4rem 0.6rem;
+          border-radius: 50px;
+          display: flex;
+          align-items: center;
+          gap: 0.25rem;
+          box-shadow: 0 4px 8px rgba(197, 23, 32, 0.2);
+          transition: transform 0.2s;
+          flex-shrink: 0;
         }
+        .back-btn:active { transform: scale(0.95); }
         .basket-header h1 {
           flex: 1;
-          font-size: 1.2rem;
+          font-size: 1.15rem;
           font-weight: 800;
           color: #2d241d;
           margin: 0;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
         .item-count {
           font-size: 0.85rem;
@@ -483,18 +541,18 @@ export default function BasketPage() {
         .basket-content {
           max-width: 700px;
           margin: 0 auto;
-          padding: 1.5rem 1rem 6rem;
+          padding: 1.5rem 0 6rem;
           display: flex;
           flex-direction: column;
-          gap: 1.5rem;
+          gap: 1rem;
         }
 
-        .items-list { display: flex; flex-direction: column; gap: 1rem; }
+        .items-list { display: flex; flex-direction: column; gap: 0; }
 
         .basket-item {
           background: white;
           border-radius: 16px;
-          padding: 1rem;
+          padding: 0.5rem;
           display: flex;
           gap: 1rem;
           border: 1.5px solid #ece8e3;
@@ -525,28 +583,27 @@ export default function BasketPage() {
         }
 
         .basket-item {
-          background: white;
-          border-radius: 18px;
-          border: 1.5px solid #ece8e3;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-          margin-bottom: 0.85rem;
+          background: transparent;
+          border-bottom: 1px solid #f0ede8;
+          margin-bottom: 0;
           overflow: hidden;
           transition: 0.2s;
         }
-        .basket-item:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(0,0,0,0.08); }
+        .basket-item:active { background: #fafafa; }
 
         .basket-item-flex {
           display: flex;
           align-items: center;
-          padding: 0.85rem 1.25rem;
-          gap: 1.5rem;
+          padding: 0.5rem 0.5rem;
+          gap: 1.25rem;
           cursor: pointer;
           width: 100%;
+          box-sizing: border-box;
         }
 
         .item-img {
-          width: 70px;
-          border-radius: 14px;
+          width: 72px;
+          border-radius: 12px;
           object-fit: cover;
           flex-shrink: 0;
           background: #faf7f2;
@@ -560,13 +617,11 @@ export default function BasketPage() {
           gap: 0.2rem;
         }
         .item-name {
-          font-size: 1rem;
+          font-size: 0.95rem;
           font-weight: 800;
           color: #2d241d;
           margin: 0;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
+          line-height: 1.2;
         }
         .item-options-list {
           display: flex;
@@ -575,26 +630,40 @@ export default function BasketPage() {
           margin: 0.1rem 0;
         }
         .item-option-text {
-          font-size: 0.8rem;
+          font-size: 0.75rem;
           color: #8d6e63;
           font-weight: 500;
-          white-space: nowrap;
         }
         .item-price-tag {
-          font-size: 0.9rem;
+          font-size: 0.75rem;
           color: #C51720;
           font-weight: 800;
+          margin-bottom: 0.25rem;
         }
+        .add-note-btn {
+          background: none;
+          border: none;
+          padding: 0;
+          color: #8d6e63;
+          font-size: 0.75rem;
+          font-weight: 600;
+          cursor: pointer;
+          text-align: left;
+          font-family: inherit;
+          text-decoration: underline;
+        }
+        .add-note-btn:hover { color: #C51720; }
 
         .item-qty-stack {
           display: flex;
           flex-direction: column;
           align-items: center;
-          gap: 0.4rem;
-          padding-left: 1.25rem;
-          border-left: 1.5px solid #faf7f2;
-          min-width: 130px;
+          gap: 0.5rem;
+          padding-left: 1rem;
+          border-left: 1.5px solid #f0ede8;
+          min-width: 120px;
           margin-left: auto;
+          flex-shrink: 0;
         }
         .qty-pill-row {
           display: flex;
@@ -672,8 +741,8 @@ export default function BasketPage() {
 
         /* Cross Selling */
         .cross-sell-section { margin-top: 0.5rem; }
-        .cross-sell-title { font-size: 1.15rem; font-weight: 800; color: #2d241d; margin: 0 0 1rem; }
-        .cross-sell-scroll { display: flex; gap: 1rem; overflow-x: auto; padding-bottom: 0.5rem; scrollbar-width: none; }
+        .cross-sell-title { font-size: 1.15rem; font-weight: 800; color: #2d241d; margin: 0 0 1rem; border-left: 5px solid #C51720; padding-left: 7.5px;}
+        .cross-sell-scroll { display: flex; gap: 1rem; overflow-x: auto; padding-bottom: 0.5rem; scrollbar-width: none; padding-left: 7.5px;}
         .cross-sell-scroll::-webkit-scrollbar { display: none; }
         .cross-sell-card { min-width: 130px; width: 130px; display: flex; flex-direction: column; gap: 0.5rem; }
         .cs-image-wrap { position: relative; width: 100%; border-radius: 12px; overflow: hidden; background: #f5f0eb; border: 1.5px solid #ece8e3; }
@@ -871,6 +940,70 @@ export default function BasketPage() {
         }
         .btn-add-to-basket:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 10px 25px rgba(197,23,32,0.3); }
         .btn-add-to-basket:disabled { background: #e5e7eb; color: #9ca3af; cursor: not-allowed; box-shadow: none; }
+
+        /* Note Modal */
+        .note-modal-overlay {
+          position: fixed;
+          top: 0; left: 0; right: 0; bottom: 0;
+          background: rgba(0,0,0,0.5);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 3000;
+          padding: 1.5rem;
+          backdrop-filter: blur(4px);
+        }
+        .note-modal-content {
+          background: white;
+          width: 100%;
+          max-width: 400px;
+          border-radius: 24px;
+          padding: 1.75rem;
+          box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+          animation: modalAppear 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        @keyframes modalAppear {
+          from { opacity: 0; transform: translateY(20px) scale(0.95); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .note-modal-content h3 { font-size: 1.3rem; font-weight: 800; color: #2d241d; margin: 0 0 0.25rem; }
+        .note-modal-subtitle { font-size: 0.9rem; color: #8d6e63; margin: 0 0 1.25rem; }
+        .note-modal-textarea {
+          width: 100%;
+          border: 1.5px solid #ece8e3;
+          border-radius: 16px;
+          padding: 1rem;
+          font-family: inherit;
+          font-size: 1rem;
+          background: #faf7f2;
+          resize: none;
+          box-sizing: border-box;
+          margin-bottom: 1.5rem;
+          transition: border-color 0.2s;
+        }
+        .note-modal-textarea:focus { outline: none; border-color: #C51720; background: white; }
+        .note-modal-footer { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+        .btn-secondary {
+          padding: 0.85rem;
+          border-radius: 14px;
+          border: 1.5px solid #ece8e3;
+          background: white;
+          color: #2d241d;
+          font-weight: 700;
+          font-family: inherit;
+          cursor: pointer;
+        }
+        .btn-primary {
+          padding: 0.85rem;
+          border-radius: 14px;
+          border: none;
+          background: #C51720;
+          color: white;
+          font-weight: 700;
+          font-family: inherit;
+          cursor: pointer;
+          box-shadow: 0 4px 12px rgba(197,23,32,0.2);
+        }
       `}</style>
 
       {/* ── CUSTOMIZATION DRAWER ── */}
@@ -878,9 +1011,9 @@ export default function BasketPage() {
         <div className="drawer-overlay">
           <div className="drawer-content">
             <div className="drawer-image-section">
-              <img 
-                src={editingItem.menuItem.imagePath || "/Logo Canteen 375 (2).png"} 
-                alt={editingItem.menuItem.namaMenu} 
+              <img
+                src={editingItem.menuItem.imagePath || "/Logo Canteen 375 (2).png"}
+                alt={editingItem.menuItem.namaMenu}
                 className="drawer-hero-img"
                 onError={(e) => { (e.target as HTMLImageElement).src = "/Logo Canteen 375 (2).png"; }}
               />
@@ -888,7 +1021,7 @@ export default function BasketPage() {
               <button className="btn-close-drawer-floating" onClick={() => setEditingItem(null)}>✕</button>
               <div className="drawer-header-content">
                 <h2>{editingItem.menuItem.namaMenu}</h2>
-                <p>Ubah pilihan sesuai seleramu</p>
+                <p>{editingItem.cartItemId === 'TEMP_ADD' ? 'Sesuaikan pesananmu' : 'Ubah pilihan sesuai seleramu'}</p>
               </div>
             </div>
 
@@ -950,7 +1083,38 @@ export default function BasketPage() {
                 onClick={confirmModalEdit}
                 disabled={!isModalValid}
               >
-                Konfirmasi Perubahan • {formatPrice(modalTotalPrice)}
+                {editingItem.cartItemId === 'TEMP_ADD' ? 'Tambah ke Keranjang' : 'Konfirmasi Perubahan'} • {formatPrice(modalTotalPrice)}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── NOTE EDITING MODAL ── */}
+      {noteEditingItem && (
+        <div className="note-modal-overlay" onClick={() => setNoteEditingItem(null)}>
+          <div className="note-modal-content" onClick={e => e.stopPropagation()}>
+            <h3>📝 Catatan Pesanan</h3>
+            <p className="note-modal-subtitle">Tambahkan instruksi khusus untuk menu ini</p>
+            <textarea
+              className="note-modal-textarea"
+              placeholder="Contoh: jangan pakai sambal, bungkus terpisah..."
+              value={noteEditingItem.note}
+              onChange={(e) => setNoteEditingItem({ ...noteEditingItem, note: e.target.value })}
+              autoFocus
+              rows={4}
+              maxLength={100}
+            />
+            <div className="note-modal-footer">
+              <button className="btn-secondary" onClick={() => setNoteEditingItem(null)}>Batal</button>
+              <button
+                className="btn-primary"
+                onClick={() => {
+                  updateNote(noteEditingItem.id, noteEditingItem.note);
+                  setNoteEditingItem(null);
+                }}
+              >
+                Simpan
               </button>
             </div>
           </div>

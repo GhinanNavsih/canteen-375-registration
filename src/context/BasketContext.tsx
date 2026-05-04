@@ -7,10 +7,11 @@ interface BasketContextType {
   basket: BasketItem[];
   totalItems: number;
   totalPrice: number;
-  addToBasket: (item: MenuItem, selectedOptions?: SelectedOption[]) => void;
+  addToBasket: (item: MenuItem, selectedOptions?: SelectedOption[], customerNote?: string) => void;
   editBasketItem: (oldCartItemId: string, newSelectedOptions: SelectedOption[]) => void;
   removeFromBasket: (cartItemId: string) => void;
   updateQuantity: (cartItemId: string, type: "dineIn" | "takeAway", delta: number) => void;
+  updateNote: (cartItemId: string, note: string) => void;
   clearBasket: () => void;
 }
 
@@ -19,7 +20,7 @@ const BasketContext = createContext<BasketContextType | undefined>(undefined);
 export function BasketProvider({ children }: { children: React.ReactNode }) {
   const [basket, setBasket] = useState<BasketItem[]>([]);
 
-  const addToBasket = useCallback((item: MenuItem, selectedOptions: SelectedOption[] = []) => {
+  const addToBasket = useCallback((item: MenuItem, selectedOptions: SelectedOption[] = [], customerNote: string = "") => {
     // Generate a unique ID based on the menu item and its selected options
     const optString = [...selectedOptions]
       .sort((a, b) => a.optionName.localeCompare(b.optionName))
@@ -42,7 +43,8 @@ export function BasketProvider({ children }: { children: React.ReactNode }) {
         menuItem: item, 
         dineInQuantity: 1, 
         takeAwayQuantity: 0, 
-        selectedOptions 
+        selectedOptions,
+        customerNote,
       }];
     });
   }, []);
@@ -104,6 +106,10 @@ export function BasketProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  const updateNote = useCallback((cartItemId: string, note: string) => {
+    setBasket((prev) => prev.map(b => b.cartItemId === cartItemId ? { ...b, customerNote: note } : b));
+  }, []);
+
   const clearBasket = useCallback(() => setBasket([]), []);
 
   const totalItems = basket.reduce(
@@ -123,7 +129,7 @@ export function BasketProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <BasketContext.Provider
-      value={{ basket, totalItems, totalPrice, addToBasket, editBasketItem, removeFromBasket, updateQuantity, clearBasket }}
+      value={{ basket, totalItems, totalPrice, addToBasket, editBasketItem, removeFromBasket, updateQuantity, updateNote, clearBasket }}
     >
       {children}
     </BasketContext.Provider>
