@@ -40,7 +40,7 @@ export default function LeaderboardPage() {
   // Generate list of months for history (starting from April 2026)
   const historyMonths: string[] = [];
   const startMonth = new Date("2026-04-01");
-  let tempDate = new Date(); 
+  let tempDate = new Date();
   tempDate.setDate(1);
 
   while (tempDate >= startMonth) {
@@ -437,9 +437,9 @@ export default function LeaderboardPage() {
               <p>Lihat hasil kompetisi bulan-bulan sebelumnya.</p>
               <div className="history-picker">
                 <label htmlFor="month-select">Pilih Bulan:</label>
-                <select 
-                  id="month-select" 
-                  value={selectedMonth} 
+                <select
+                  id="month-select"
+                  value={selectedMonth}
                   onChange={(e) => setSelectedMonth(e.target.value)}
                 >
                   {historyMonths.map(m => {

@@ -900,7 +900,7 @@ export default function BasketPage() {
         .og-badge.pending { background: #fffcf0; color: #b45309; border: 1px solid #fde68a; }
         .og-badge.completed { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
 
-        .og-options { display: flex; flex-direction: column; gap: 0.5rem; }
+        .og-options { display: flex; flex-direction: column; gap: 0.33rem; }
         .og-option-row {
           display: flex;
           align-items: center;
