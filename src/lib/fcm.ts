@@ -59,8 +59,16 @@ export async function requestNotificationPermission(
       return null;
     }
 
-    // Wait for the service worker to be ready
-    const swRegistration = await navigator.serviceWorker.ready;
+    // Find the specific registration for the Firebase messaging worker
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    const swRegistration = registrations.find(reg => 
+      reg.active?.scriptURL.includes("firebase-messaging-sw.js")
+    );
+
+    if (!swRegistration) {
+      console.warn("[FCM] Firebase service worker not found or not active yet.");
+      return null;
+    }
 
     const token = await getToken(messaging, {
       vapidKey: VAPID_KEY,
