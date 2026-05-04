@@ -62,6 +62,28 @@ export default function ImageCropModal({ onClose, onSaved, menuName }: ImageCrop
     }
   };
 
+  const handleRotate = () => {
+    const image = imgRef.current;
+    if (!image) return;
+
+    const canvas = document.createElement("canvas");
+    // Swap width and height for 90deg rotation
+    canvas.width = image.naturalHeight;
+    canvas.height = image.naturalWidth;
+    
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate((90 * Math.PI) / 180);
+    ctx.drawImage(image, -image.naturalWidth / 2, -image.naturalHeight / 2);
+
+    const newSrc = canvas.toDataURL("image/jpeg", 0.9);
+    setImgSrc(newSrc);
+    // Note: setImgSrc will trigger onImageLoad when the new image finishes loading,
+    // which will automatically reset the crop to the center of the new orientation.
+  };
+
   const getCroppedBlob = (): Promise<Blob> => {
     return new Promise((resolve, reject) => {
       const image = imgRef.current;
@@ -91,7 +113,7 @@ export default function ImageCropModal({ onClose, onSaved, menuName }: ImageCrop
       canvas.toBlob(
         (blob) => (blob ? resolve(blob) : reject("Failed to create blob")),
         "image/jpeg",
-        0.85,
+        0.85
       );
     });
   };
@@ -169,6 +191,11 @@ export default function ImageCropModal({ onClose, onSaved, menuName }: ImageCrop
           background: #00b14f; color: white; border-color: #00b14f;
         }
         .icm-error { color: #d32f2f; font-size: 0.85rem; font-weight: 500; text-align: center; }
+        .icm-rotate-btn {
+          background: white; border: 1px solid #ddd; padding: 0.35rem 0.6rem;
+          border-radius: 6px; font-size: 1rem; cursor: pointer; transition: all 0.15s;
+        }
+        .icm-rotate-btn:hover { background: #f5f5f5; border-color: #00b14f; }
         .icm-footer {
           padding: 1.25rem 1.5rem; border-top: 1px solid #eee;
           display: flex; justify-content: flex-end; gap: 0.75rem; background: #fafafa;
@@ -219,6 +246,9 @@ export default function ImageCropModal({ onClose, onSaved, menuName }: ImageCrop
                       {r}
                     </button>
                   ))}
+                  <button className="icm-rotate-btn" onClick={handleRotate} title="Rotate Image">
+                    🔄
+                  </button>
                 </div>
                 <ReactCrop
                   crop={crop}
