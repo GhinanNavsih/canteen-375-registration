@@ -37,10 +37,10 @@ export default function RootLayout({
           <MemberProvider>
             <BasketProvider>
               {children}
+              <ServiceWorkerRegistrar />
             </BasketProvider>
           </MemberProvider>
         </StyledJsxRegistry>
-        <ServiceWorkerRegistrar />
       </body>
     </html>
   );

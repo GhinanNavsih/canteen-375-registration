@@ -203,7 +203,9 @@ export default function DashboardPage() {
               </div>
               <div className="profile-info">
                 <h2>{member.fullName}</h2>
-                <span className="category-badge">{member.category}</span>
+                <span className="category-badge">
+                  {member.category === "Guru/Dosen" ? "Guru/Dosen/Staff" : member.category}
+                </span>
               </div>
             </div>
 

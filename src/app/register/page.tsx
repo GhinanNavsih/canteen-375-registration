@@ -7,7 +7,7 @@ import { doc, setDoc, serverTimestamp, getDoc, writeBatch } from "firebase/fires
 import { auth, db } from "@/lib/firebase";
 import { buildMemberDocumentId } from "@/lib/memberDocId";
 
-type Category = "Santri" | "Mahasiswa" | "Guru/Dosen" | "";
+type Category = "Santri" | "Mahasiswa" | "Guru/Dosen/Staff" | "";
 
 const FORMAL_SCHOOLS = [
   "SMA DU 1 Unggulan BPPT",
@@ -154,19 +154,46 @@ export default function RegistrationPage() {
   };
 
   const validate = (): string | null => {
+    // 1. Password validation
     if (formData.password.length < 6) {
       return "Password minimal 6 karakter.";
     }
     if (formData.password !== formData.confirmPassword) {
       return "Password dan konfirmasi password tidak cocok.";
     }
-    // Phone required for Mahasiswa and Guru/Dosen
-    if (
-      (formData.category === "Mahasiswa" || formData.category === "Guru/Dosen") &&
-      formData.phoneNumber.length <= 3
-    ) {
-      return "Nomor telepon wajib diisi untuk kategori ini.";
+
+    // 2. Date of Birth validation
+    const dateParts = formData.dateOfBirth.split("-");
+    if (dateParts.length !== 3 || formData.dateOfBirth.length < 10) {
+      return "Format tanggal lahir harus lengkap (DD-MM-YYYY).";
     }
+
+    const day = parseInt(dateParts[0], 10);
+    const month = parseInt(dateParts[1], 10);
+    const year = parseInt(dateParts[2], 10);
+
+    if (isNaN(day) || isNaN(month) || isNaN(year)) {
+      return "Tanggal lahir harus berupa angka.";
+    }
+    if (month < 1 || month > 12) {
+      return "Bulan tidak valid! Masukkan bulan 1-12.";
+    }
+    if (year < 1920 || year > new Date().getFullYear()) {
+      return "Tahun lahir tidak valid.";
+    }
+
+    // Check if day is valid for that month (handles leap years too)
+    const daysInMonth = new Date(year, month, 0).getDate();
+    if (day < 1 || day > daysInMonth) {
+      return `Tanggal ${day} tidak tersedia di bulan tersebut.`;
+    }
+
+    // 3. Phone required for Mahasiswa and Guru/Dosen/Staff
+    const isRequired = formData.category === "Mahasiswa" || formData.category === "Guru/Dosen/Staff";
+    if (isRequired && formData.phoneNumber.length <= 11) {
+      return "Nomor telepon tidak valid (minimal 9 digit setelah +62).";
+    }
+
     return null;
   };
 
@@ -463,10 +490,13 @@ export default function RegistrationPage() {
               name="phoneNumber"
               placeholder="+628..."
               inputMode="tel"
-              required={formData.category === "Mahasiswa" || formData.category === "Guru/Dosen"}
+              required={formData.category === "Mahasiswa" || formData.category === "Guru/Dosen/Staff"}
               value={formData.phoneNumber}
               onChange={handleInputChange}
             />
+            <p style={{ fontSize: "0.8rem", color: "#8d6e63", marginTop: "0.4rem" }}>
+              💡 Gunakan nomor yang aktif di <strong>WhatsApp</strong> untuk info promo.
+            </p>
           </div>
 
           {/* ── Category Dropdown ── */}
@@ -482,7 +512,7 @@ export default function RegistrationPage() {
               <option value="">Pilih Kategori</option>
               <option value="Santri">Santri</option>
               <option value="Mahasiswa">Mahasiswa</option>
-              <option value="Guru/Dosen">Guru/Dosen</option>
+              <option value="Guru/Dosen/Staff">Guru/Dosen/Staff</option>
             </select>
           </div>
 
@@ -575,8 +605,8 @@ export default function RegistrationPage() {
             </div>
           )}
 
-          {/* ── Guru/Dosen-specific Fields ── */}
-          {formData.category === "Guru/Dosen" && (
+          {/* ── Guru/Dosen/Staff-specific Fields ── */}
+          {formData.category === "Guru/Dosen/Staff" && (
             <div className="conditional-section animate-fade-in">
               <div className="form-group">
                 <label htmlFor="institution">Instansi</label>

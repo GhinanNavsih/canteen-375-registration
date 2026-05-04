@@ -1,4 +1,4 @@
-export type Category = "Santri" | "Mahasiswa" | "Guru/Dosen" | "";
+export type Category = "Santri" | "Mahasiswa" | "Guru/Dosen/Staff" | "";
 
 export interface Member {
     id: string;      // Firestore document ID (same as uid)

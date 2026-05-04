@@ -1,14 +1,40 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.expiredVoucherCleanup = exports.distributeMonthlyRewards = exports.onMemberCreated = exports.birthdayVoucherScheduler = void 0;
+exports.onVoucherGroupAchieved = exports.onPointsUpdated = exports.expiredVoucherCleanup = exports.distributeMonthlyRewards = exports.onMemberCreated = exports.birthdayVoucherScheduler = exports.setAdminRole = void 0;
 const admin = require("firebase-admin");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
 const firestore_1 = require("firebase-functions/v2/firestore");
+const https_1 = require("firebase-functions/v2/https");
 const v2_1 = require("firebase-functions/v2");
 admin.initializeApp();
 const db = admin.firestore();
 const VOUCHER_COLLECTION = "vouchers";
 const VOUCHER_VALUE = 10000;
+// ── FUNCTION 0: Set Admin Role via Custom Claim ──────────────────────────────
+// Call this ONCE with your own UID (from the Firebase console or a tool) to
+// bootstrap admin access. After calling, the user must sign out and back in
+// for the new token (with the claim) to be issued.
+//
+// Usage (from a trusted environment, e.g. Firebase console / curl):
+//   firebase functions:call setAdminRole --data '{"uid":"YOUR_UID"}'
+exports.setAdminRole = (0, https_1.onCall)({ region: "us-central1" }, async (request) => {
+    var _a, _b;
+    // Only existing admins can promote others.
+    if (((_b = (_a = request.auth) === null || _a === void 0 ? void 0 : _a.token) === null || _b === void 0 ? void 0 : _b.admin) !== true) {
+        throw new https_1.HttpsError("permission-denied", "Only admins can set roles.");
+    }
+    const { uid } = request.data;
+    if (!uid)
+        throw new https_1.HttpsError("invalid-argument", "uid is required.");
+    await admin.auth().setCustomUserClaims(uid, { admin: true });
+    v2_1.logger.info(`[setAdminRole] Granted admin role to uid: ${uid}`);
+    return { success: true };
+});
+// NOTE: To bootstrap the FIRST admin (chicken-and-egg), run this snippet once
+// in the Firebase Admin SDK locally or via a one-time script:
+//   const admin = require('firebase-admin');
+//   admin.initializeApp();
+//   admin.auth().setCustomUserClaims('YOUR_UID', { admin: true });
 // SHARED HELPER - Birthday Voucher logic
 async function issueBirthdayVoucherIfEligible(memberId, memberData) {
     var _a, _b;
@@ -133,6 +159,8 @@ exports.distributeMonthlyRewards = (0, scheduler_1.onSchedule)({
                 continue;
             const category = memberData.category || "Umum";
             const points = stats.customerPoints || 0;
+            const numberOfTransaction = stats.numberOfTransaction || 0;
+            const amountSpent = stats.amountSpent || 0;
             if (points > 0) {
                 if (!categoriesMap.has(category))
                     categoriesMap.set(category, []);
@@ -140,10 +168,16 @@ exports.distributeMonthlyRewards = (0, scheduler_1.onSchedule)({
                     id: memberId,
                     name: memberData.fullName || memberData.name || "Member",
                     points: points,
+                    numberOfTransaction: numberOfTransaction,
+                    amountSpent: amountSpent,
                 });
             }
         }
-        const prizes = [25000, 15000, 10000];
+        // New prizes apply starting from May 2026 (distributed in June)
+        // Anything before May 2026 (e.g., April) uses the old prizes.
+        const prizes = prevMonthStr >= "2026-05"
+            ? [50000, 25000, 15000]
+            : [25000, 15000, 10000];
         const batch = db.batch();
         const currentMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
         let totalVouchers = 0;
@@ -156,7 +190,13 @@ exports.distributeMonthlyRewards = (0, scheduler_1.onSchedule)({
             return randomCode;
         };
         for (const [category, participants] of categoriesMap.entries()) {
-            participants.sort((a, b) => b.points - a.points);
+            participants.sort((a, b) => {
+                if (b.points !== a.points)
+                    return b.points - a.points;
+                if (b.numberOfTransaction !== a.numberOfTransaction)
+                    return b.numberOfTransaction - a.numberOfTransaction;
+                return b.amountSpent - a.amountSpent;
+            });
             const winners = participants.slice(0, 3);
             winners.forEach((winner, index) => {
                 const rank = index + 1;
@@ -216,5 +256,153 @@ exports.expiredVoucherCleanup = (0, scheduler_1.onSchedule)({
     catch (error) {
         v2_1.logger.error("Error during expired voucher cleanup:", error);
     }
+});
+// ══════════════════════════════════════════════════════════════════════════════
+// PUSH NOTIFICATION HELPERS
+// ══════════════════════════════════════════════════════════════════════════════
+/**
+ * Send an FCM push notification to all devices registered under a member.
+ * Automatically cleans up any invalid/expired tokens.
+ */
+async function sendPushToMember(memberId, title, body, data) {
+    var _a, _b;
+    const memberSnap = await db.collection("Members").doc(memberId).get();
+    if (!memberSnap.exists)
+        return;
+    const tokens = (_b = (_a = memberSnap.data()) === null || _a === void 0 ? void 0 : _a.fcmTokens) !== null && _b !== void 0 ? _b : [];
+    if (tokens.length === 0)
+        return;
+    const message = {
+        tokens,
+        notification: { title, body },
+        data: data !== null && data !== void 0 ? data : {},
+        webpush: {
+            notification: {
+                icon: "/icons/icon-192.png",
+                badge: "/icons/icon-192.png",
+                vibrate: [200, 100, 200],
+            },
+        },
+    };
+    const response = await admin.messaging().sendEachForMulticast(message);
+    v2_1.logger.info(`[Push] Sent to ${memberId}: ${response.successCount} success, ${response.failureCount} failure`);
+    // Clean up invalid tokens
+    const tokensToRemove = [];
+    response.responses.forEach((res, idx) => {
+        if (res.error &&
+            (res.error.code === "messaging/registration-token-not-registered" ||
+                res.error.code === "messaging/invalid-registration-token")) {
+            tokensToRemove.push(tokens[idx]);
+        }
+    });
+    if (tokensToRemove.length > 0) {
+        await db
+            .collection("Members")
+            .doc(memberId)
+            .update({
+            fcmTokens: admin.firestore.FieldValue.arrayRemove(...tokensToRemove),
+        });
+        v2_1.logger.info(`[Push] Removed ${tokensToRemove.length} stale token(s) for ${memberId}`);
+    }
+}
+// ── FUNCTION 5: Notify member when points increase ───────────────────────────
+// Triggers whenever a Members document is updated.
+// Compares old vs new "points" field; if points went up, sends a push
+// notification including: points added, new total, and any redeemable vouchers.
+exports.onPointsUpdated = (0, firestore_1.onDocumentUpdated)({
+    document: "Members/{memberId}",
+    region: "us-central1",
+}, async (event) => {
+    var _a, _b, _c, _d;
+    const memberId = event.params.memberId;
+    const beforeData = (_a = event.data) === null || _a === void 0 ? void 0 : _a.before.data();
+    const afterData = (_b = event.data) === null || _b === void 0 ? void 0 : _b.after.data();
+    if (!beforeData || !afterData)
+        return;
+    const oldPoints = (_c = beforeData.points) !== null && _c !== void 0 ? _c : 0;
+    const newPoints = (_d = afterData.points) !== null && _d !== void 0 ? _d : 0;
+    const pointsAdded = newPoints - oldPoints;
+    // Only fire when points have *increased*
+    if (pointsAdded <= 0)
+        return;
+    v2_1.logger.info(`[onPointsUpdated] ${memberId}: ${oldPoints} → ${newPoints} (+${pointsAdded})`);
+    // Query redeemable vouchers (READY_TO_CLAIM) for this member
+    const [vouchersSnap, vouchersSingularSnap] = await Promise.all([
+        db
+            .collection("vouchers")
+            .where("userId", "==", memberId)
+            .where("status", "==", "READY_TO_CLAIM")
+            .get(),
+        db
+            .collection("voucher")
+            .where("userId", "==", memberId)
+            .where("status", "==", "READY_TO_CLAIM")
+            .get(),
+    ]);
+    const redeemableVouchers = [];
+    const addVoucher = (doc) => {
+        var _a, _b;
+        const d = doc.data();
+        // Only include non-expired vouchers
+        const expireDate = (_b = (_a = d.expireDate) === null || _a === void 0 ? void 0 : _a.toDate) === null || _b === void 0 ? void 0 : _b.call(_a);
+        if (expireDate && expireDate < new Date())
+            return;
+        redeemableVouchers.push({
+            name: d.voucherName || "Voucher",
+            value: d.value || 0,
+        });
+    };
+    vouchersSnap.forEach(addVoucher);
+    vouchersSingularSnap.forEach(addVoucher);
+    // Build notification body
+    let body = `+${pointsAdded} poin! Total poin Anda sekarang: ${newPoints} ⭐`;
+    if (redeemableVouchers.length > 0) {
+        body += "\n\n🎁 Voucher siap diklaim:";
+        redeemableVouchers.forEach((v) => {
+            body += `\n• ${v.name} (Rp${v.value.toLocaleString("id-ID")})`;
+        });
+    }
+    await sendPushToMember(memberId, "Poin Bertambah! 🎉", body, {
+        type: "points_update",
+        pointsAdded: String(pointsAdded),
+        newTotal: String(newPoints),
+        tag: "points-update",
+    });
+});
+// ── FUNCTION 6: Notify member when they achieve a voucherGroup voucher ───────
+// Triggers when a new document is created in the "vouchers" collection.
+// If the voucher has a voucherGroupId (meaning it was earned from a campaign),
+// send a congratulatory push notification.
+exports.onVoucherGroupAchieved = (0, firestore_1.onDocumentCreated)({
+    document: "vouchers/{voucherId}",
+    region: "us-central1",
+}, async (event) => {
+    var _a;
+    const voucherData = (_a = event.data) === null || _a === void 0 ? void 0 : _a.data();
+    if (!voucherData)
+        return;
+    const memberId = voucherData.userId;
+    if (!memberId)
+        return;
+    // Only notify for voucherGroup-based vouchers (campaign achievements)
+    // Skip competition rewards and birthday vouchers — those have their own context.
+    const voucherGroupId = voucherData.voucherGroupId;
+    if (!voucherGroupId)
+        return;
+    const voucherName = voucherData.voucherName || "Voucher";
+    const value = voucherData.value || 0;
+    const status = voucherData.status || "";
+    // Only notify if the voucher is ready to claim
+    if (status !== "READY_TO_CLAIM")
+        return;
+    const body = `Selamat! Anda berhasil meraih voucher "${voucherName}" ` +
+        `senilai Rp${value.toLocaleString("id-ID")}! ` +
+        `Buka aplikasi untuk mengklaim. 🎊`;
+    await sendPushToMember(memberId, "Voucher Baru! 🎁", body, {
+        type: "voucher_achieved",
+        voucherName: voucherName,
+        tag: "voucher-achieved",
+    });
+    v2_1.logger.info(`[onVoucherGroupAchieved] Notified ${memberId} about voucher "${voucherName}"`);
 });
 //# sourceMappingURL=index.js.map

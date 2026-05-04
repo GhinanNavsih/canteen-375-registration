@@ -190,6 +190,9 @@ export default function LeaderboardPage() {
     }))
     .filter((r) => {
       const m = members[r.memberId];
+      if (selectedCategory === "Guru/Dosen/Staff") {
+        return m?.category === "Guru/Dosen/Staff" || m?.category === "Guru/Dosen";
+      }
       return m?.category === selectedCategory;
     })
     .sort((a, b) => {
@@ -322,7 +325,7 @@ export default function LeaderboardPage() {
           )}
 
           <div className="category-tabs">
-            {(["Santri", "Mahasiswa", "Guru/Dosen"] as Category[]).map(cat => (
+            {(["Santri", "Mahasiswa", "Guru/Dosen/Staff"] as Category[]).map(cat => (
               <button
                 key={cat}
                 className={`tab-btn ${selectedCategory === cat ? 'active' : ''}`}
