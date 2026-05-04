@@ -203,7 +203,7 @@ export default function LeaderboardPage() {
     .filter((r) => {
       const m = members[r.memberId];
       if (selectedCategory === "Guru/Dosen/Staff") {
-        return m?.category === "Guru/Dosen/Staff" || m?.category === "Guru/Dosen";
+        return (m?.category as string) === "Guru/Dosen/Staff" || (m?.category as string) === "Guru/Dosen";
       }
       return m?.category === selectedCategory;
     })
