@@ -135,8 +135,10 @@ export default function OrderPage() {
 
   const handleItemClick = (item: MenuItem) => {
     const itemGroups = optionGroups.filter(g =>
-      g.linkedItemIds.includes(item.id) ||
-      (g.linkedMenuItems || []).includes(item.namaMenu)
+      g.show !== false && (
+        g.linkedItemIds.includes(item.id) ||
+        (g.linkedMenuItems || []).includes(item.namaMenu)
+      )
     );
     if (itemGroups.length > 0) {
       // Open customization drawer
@@ -165,8 +167,10 @@ export default function OrderPage() {
   const activeItemGroups = useMemo(() => {
     if (!selectedItem) return [];
     return optionGroups.filter(g =>
-      g.linkedItemIds.includes(selectedItem.id) ||
-      (g.linkedMenuItems || []).includes(selectedItem.namaMenu)
+      g.show !== false && (
+        g.linkedItemIds.includes(selectedItem.id) ||
+        (g.linkedMenuItems || []).includes(selectedItem.namaMenu)
+      )
     );
   }, [selectedItem, optionGroups]);
 
@@ -392,7 +396,7 @@ export default function OrderPage() {
                       </div>
 
                       <div className="og-options">
-                        {group.options.map(opt => {
+                        {group.options.filter(opt => opt.show !== false).map(opt => {
                           const isSelected = currentSelections.some(o => o.optionName === opt.name);
                           return (
                             <label key={opt.name} className="og-option-row">
@@ -407,9 +411,9 @@ export default function OrderPage() {
                                 </div>
                                 <span className="og-option-name">{opt.name}</span>
                               </div>
-                              {opt.additionalPrice > 0 && (
-                                <span className="og-option-price">+{formatPrice(opt.additionalPrice)}</span>
-                              )}
+                                <span className="og-option-price">
+                                  +Rp{(opt.additionalPrice || 0).toLocaleString("id-ID")}
+                                </span>
                             </label>
                           );
                         })}

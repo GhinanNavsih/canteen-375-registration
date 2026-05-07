@@ -12,11 +12,12 @@ const MENU_PATH = ["Canteens", "canteen375", "MenuCollection"] as const;
 
 const emptyGroup = (): Omit<OptionGroup, "id"> => ({
   name: "",
-  options: [{ name: "", additionalPrice: 0 }],
+  options: [{ name: "", additionalPrice: 0, show: true }],
   selectionRule: "required",
   ruleType: "exactly",
   ruleCount: 1,
   linkedItemIds: [],
+  show: true,
 });
 
 export default function OptionGroupsTab({ showToast }: {
@@ -68,6 +69,7 @@ export default function OptionGroupsTab({ showToast }: {
             selectionRule: data.selectionRule || (data.isRequired ? 'required' : 'optional'),
             ruleType: data.ruleType || 'exactly',
             ruleCount: data.ruleCount || 1,
+            show: data.show !== false,
           } as OptionGroup;
         });
       const fetchedMenuItems = menuSnap.docs.map(d => ({ ...d.data(), id: d.id } as MenuItem));
@@ -99,12 +101,13 @@ export default function OptionGroupsTab({ showToast }: {
       ruleType: group.ruleType,
       ruleCount: group.ruleCount,
       linkedItemIds: [...group.linkedItemIds],
+      show: group.show !== false,
     });
     setDrawerOpen(true);
     setOgMenuOpen(false);
   };
 
-  const addOption = () => setForm(f => ({ ...f, options: [...f.options, { name: "", additionalPrice: 0 }] }));
+  const addOption = () => setForm(f => ({ ...f, options: [...f.options, { name: "", additionalPrice: 0, show: true }] }));
 
   const removeOption = (idx: number) => setForm(f => ({
     ...f, options: f.options.filter((_, i) => i !== idx)
@@ -166,7 +169,7 @@ export default function OptionGroupsTab({ showToast }: {
 
   const formatPrice = (p: number) => {
     const val = p || 0;
-    return val === 0 ? "Gratis" : `+Rp${val.toLocaleString("id-ID")}`;
+    return `+Rp${val.toLocaleString("id-ID")}`;
   };
 
   const filteredGroups = groups.filter(g =>
@@ -215,6 +218,20 @@ export default function OptionGroupsTab({ showToast }: {
             />
           </div>
 
+          {/* Visibility Toggle */}
+          <div className="og-section">
+            <div className="og-section-label">VISIBILITY</div>
+            <div className="toggle-row">
+              <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#555' }}>Tampilkan di Menu Display</label>
+              <button
+                className={`show-menu-btn ${form.show !== false ? "visible" : ""}`}
+                onClick={() => setForm(f => ({ ...f, show: !f.show }))}
+              >
+                {form.show !== false ? "👁️ Ditampilkan" : "🚫 Disembunyikan"}
+              </button>
+            </div>
+          </div>
+
           {/* Options List */}
           <div className="og-section">
             <div className="og-section-header">
@@ -247,6 +264,17 @@ export default function OptionGroupsTab({ showToast }: {
                           updateOption(idx, "additionalPrice", val === "" ? 0 : Number(val));
                         }}
                       />
+                    </div>
+                    <div style={{ marginTop: "0.75rem" }}>
+                      <button
+                        className={`show-opt-btn ${opt.show !== false ? "visible" : ""}`}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          updateOption(idx, "show", opt.show === false);
+                        }}
+                      >
+                        {opt.show !== false ? "👁️ Visible" : "🚫 Hidden"}
+                      </button>
                     </div>
                   </div>
                   {form.options.length > 1 && (
@@ -382,7 +410,10 @@ export default function OptionGroupsTab({ showToast }: {
                   className={`cat-item ${activeGroup === g.id ? "active" : ""}`}
                   onClick={() => setActiveGroup(g.id)}
                 >
-                  <span className="cat-name">{g.name}</span>
+                  <span className="cat-name">
+                    {g.name}
+                    {g.show === false && <span className="hidden-badge-mini">Hidden</span>}
+                  </span>
                   <span className="cat-count">{g.options.length}</span>
                 </div>
               ))
@@ -429,7 +460,10 @@ export default function OptionGroupsTab({ showToast }: {
               {selectedGroup.options.map((opt, i) => (
                 <div key={i} className="menu-item-row">
                   <div className="item-text">
-                    <span className="item-title">{opt.name}</span>
+                    <span className="item-title">
+                      {opt.name}
+                      {opt.show === false && <span className="hidden-badge-mini">Hidden</span>}
+                    </span>
                     <span className="item-price">{formatPrice(opt.additionalPrice)}</span>
                   </div>
                 </div>
@@ -493,6 +527,26 @@ export default function OptionGroupsTab({ showToast }: {
         .og-link-item-info { display: flex; flex-direction: column; }
         .og-link-name { font-size: 0.9rem; font-weight: 500; color: #333; }
         .og-link-cat { font-size: 0.75rem; color: #888; }
+
+        .toggle-row { display: flex; align-items: center; justify-content: space-between; }
+        .show-menu-btn {
+          border: 1.5px solid #00b14f; border-radius: 8px; background: white; color: #00b14f;
+          padding: 0.5rem 1rem; font-size: 0.85rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 0.5rem; transition: 0.2s;
+        }
+        .show-menu-btn:not(.visible) { border-color: #d32f2f; color: #d32f2f; }
+        .show-menu-btn.visible:hover { background: #e8f5e9; }
+        .show-menu-btn:not(.visible):hover { background: #ffebee; }
+
+        .show-opt-btn {
+          border: 1px solid #00b14f; border-radius: 6px; background: white; color: #00b14f;
+          padding: 0.3rem 0.6rem; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: 0.2s;
+        }
+        .show-opt-btn:not(.visible) { border-color: #d32f2f; color: #d32f2f; }
+
+        .hidden-badge-mini {
+          font-size: 0.6rem; font-weight: 800; color: #d32f2f; background: #ffebee;
+          padding: 0.1rem 0.4rem; border-radius: 4px; margin-left: 0.5rem; text-transform: uppercase;
+        }
       `}</style>
     </div>
   );

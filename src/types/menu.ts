@@ -19,6 +19,7 @@ export interface OptionItem {
   additionalPrice: number;
   // Firebase may store price as priceAdjustment instead
   priceAdjustment?: number;
+  show?: boolean;
 }
 
 export interface OptionGroup {
@@ -30,6 +31,7 @@ export interface OptionGroup {
   ruleCount: number;                              // how many the customer must pick
   linkedItemIds: string[];                        // IDs of MenuItems this group applies to
   linkedMenuItems?: string[];                     // Menu names this group applies to (from POS app)
+  show?: boolean;
 }
 
 export interface SelectedOption {
