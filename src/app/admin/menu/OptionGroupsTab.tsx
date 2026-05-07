@@ -113,7 +113,7 @@ export default function OptionGroupsTab({ showToast }: {
     ...f, options: f.options.filter((_, i) => i !== idx)
   }));
 
-  const updateOption = (idx: number, field: keyof OptionItem, value: string | number) => {
+  const updateOption = (idx: number, field: keyof OptionItem, value: string | number | boolean) => {
     setForm(f => {
       const updated = [...f.options];
       updated[idx] = { ...updated[idx], [field]: value };
