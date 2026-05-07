@@ -11,6 +11,7 @@ export interface MenuItem {
   sortOrder?: number;
   unitsPerPackage?: number;
   showMenu?: boolean;
+  stok?: number;
 }
 
 export interface OptionItem {
