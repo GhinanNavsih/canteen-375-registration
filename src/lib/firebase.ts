@@ -21,4 +21,32 @@ const rtdb = getDatabase(app);
 const auth = getAuth(app);
 const storage = getStorage(app);
 
+import { collection as fsCollection, doc as fsDoc, CollectionReference, DocumentReference, DocumentData } from "firebase/firestore";
+
+export const collection = (instanceOrRef: any, ...pathSegments: string[]): CollectionReference<DocumentData> => {
+  if (typeof window !== "undefined" && localStorage.getItem("zTestingMode") === "true") {
+    if (instanceOrRef === db && pathSegments.length > 0) {
+      const parts = pathSegments[0].split('/');
+      if (!parts[0].startsWith('zTesting_')) {
+        parts[0] = `zTesting_${parts[0]}`;
+        pathSegments[0] = parts.join('/');
+      }
+    }
+  }
+  return fsCollection(instanceOrRef, ...pathSegments);
+};
+
+export const doc = (instanceOrRef: any, ...pathSegments: string[]): DocumentReference<DocumentData> => {
+  if (typeof window !== "undefined" && localStorage.getItem("zTestingMode") === "true") {
+    if (instanceOrRef === db && pathSegments.length > 0) {
+      const parts = pathSegments[0].split('/');
+      if (!parts[0].startsWith('zTesting_')) {
+        parts[0] = `zTesting_${parts[0]}`;
+        pathSegments[0] = parts.join('/');
+      }
+    }
+  }
+  return fsDoc(instanceOrRef, ...pathSegments);
+};
+
 export { db, rtdb, auth, storage };

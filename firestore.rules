@@ -66,6 +66,12 @@ service cloud.firestore {
         allow read, write, update, delete: if true;
       }
     }
+    match /MonthlyFinancialReport/{id} {
+      allow read, write, update, delete: if true;
+    }
+    match /YearlyFinancialReport/{id} {
+      allow read, write, update, delete: if true;
+    }
     match /Status/{id} { allow read, write, delete, update: if true; }
     match /Expenses/{id} { allow read, write: if isAuthenticated(); }
     match /CashflowSettings/{id} {
@@ -269,6 +275,14 @@ service cloud.firestore {
         allow read, write, update, delete: if true;
       }
     }
+    
+    match /zTesting_MonthlyFinancialReport/{id} {
+      allow read, write, update, delete: if true;
+    }
+    
+    match /zTesting_YearlyFinancialReport/{id} {
+      allow read, write, update, delete: if true;
+    }
 
     match /zTesting_Expenses/{id} {
       allow read, write: if true;
@@ -320,6 +334,26 @@ service cloud.firestore {
       match /{subcollection=**} {
         allow read, write, update, delete: if true;
       }
+    }
+
+    match /zTesting_pointTransactions/{id} {
+      allow read, write, update, delete: if true;
+    }
+
+    match /zTesting_SelfOrders/{id} {
+      allow read, write, update, delete: if true;
+    }
+
+    match /zTesting_feedbacks/{id} {
+      allow read, write, update, delete: if true;
+    }
+
+    match /zTesting_assets/{id} {
+      allow read, write, update, delete: if true;
+    }
+
+    match /zTesting_config/{id} {
+      allow read, write, update, delete: if true;
     }
   }
 }

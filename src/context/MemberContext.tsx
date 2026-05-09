@@ -3,7 +3,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { getDoc } from "firebase/firestore";
+import { doc } from "@/lib/firebase";
 import { auth, db } from '@/lib/firebase';
 import { Member } from '@/types/member';
 import { userIsAdminFromToken } from '@/lib/adminAuth';

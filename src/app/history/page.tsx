@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { collection, query, where, orderBy, limit, getDocs } from "firebase/firestore";
+import { query, where, orderBy, limit, getDocs } from "firebase/firestore";
+import { collection } from "@/lib/firebase";
 import { db } from "@/lib/firebase";
 import { useMember } from "@/context/MemberContext";
 import Navbar from "@/components/Navbar";
@@ -129,7 +130,7 @@ export default function HistoryPage() {
                   <div key={tx.id} className={`history-card ${isExpanded ? 'expanded' : ''}`}>
                     <div className="history-card-header" onClick={() => toggleExpand(tx.id)}>
                       <div className="hc-left">
-                        <div className="hc-icon">🛍️</div>
+                        <div className="hc-icon">🍱</div>
                         <div className="hc-info">
                           <span className="hc-date">{formatDate(tx.timestamp)}</span>
                           <span className="hc-summary">{totalItemsCount} item • {tx.paymentMethod || "Pembayaran"}</span>

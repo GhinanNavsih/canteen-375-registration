@@ -3,7 +3,8 @@
 import { useState } from "react";
 import Image from "next/image";
 import { createUserWithEmailAndPassword, deleteUser } from "firebase/auth";
-import { doc, setDoc, serverTimestamp, getDoc, writeBatch } from "firebase/firestore";
+import { setDoc, serverTimestamp, getDoc, writeBatch } from "firebase/firestore";
+import { doc } from "@/lib/firebase";
 import { auth, db } from "@/lib/firebase";
 import { buildMemberDocumentId } from "@/lib/memberDocId";
 

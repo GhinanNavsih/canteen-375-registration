@@ -1,9 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import {
-  collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc
-} from "firebase/firestore";
+import { getDocs, addDoc, updateDoc, deleteDoc, setDoc } from "firebase/firestore";
+import { collection, doc } from "@/lib/firebase";
 import { db } from "@/lib/firebase";
 import { OptionGroup, OptionItem, MenuItem } from "@/types/menu";
 

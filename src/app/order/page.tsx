@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { collection, getDocs, doc, getDoc } from "firebase/firestore";
+import { getDocs, getDoc } from "firebase/firestore";
+import { collection, doc } from "@/lib/firebase";
 import { db } from "@/lib/firebase";
 import { useMember } from "@/context/MemberContext";
 import { useBasket } from "@/context/BasketContext";

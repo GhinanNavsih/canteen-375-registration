@@ -7,20 +7,18 @@ import { logger } from "firebase-functions/v2";
 admin.initializeApp();
 const db = admin.firestore();
 
+// Helper to get collection name with optional testing prefix
+const getCol = (name: string, eventPath: string) => {
+    return eventPath.startsWith("zTesting_") ? `zTesting_${name}` : name;
+};
+
 const VOUCHER_COLLECTION = "vouchers";
 const VOUCHER_VALUE = 10000;
 
 // ── FUNCTION 0: Set Admin Role via Custom Claim ──────────────────────────────
-// Call this ONCE with your own UID (from the Firebase console or a tool) to
-// bootstrap admin access. After calling, the user must sign out and back in
-// for the new token (with the claim) to be issued.
-//
-// Usage (from a trusted environment, e.g. Firebase console / curl):
-//   firebase functions:call setAdminRole --data '{"uid":"YOUR_UID"}'
 export const setAdminRole = onCall(
     { region: "us-central1" },
     async (request) => {
-        // Only existing admins can promote others.
         if (request.auth?.token?.admin !== true) {
             throw new HttpsError("permission-denied", "Only admins can set roles.");
         }
@@ -32,29 +30,17 @@ export const setAdminRole = onCall(
     }
 );
 
-// NOTE: To bootstrap the FIRST admin (chicken-and-egg), run this snippet once
-// in the Firebase Admin SDK locally or via a one-time script:
-//   const admin = require('firebase-admin');
-//   admin.initializeApp();
-//   admin.auth().setCustomUserClaims('YOUR_UID', { admin: true });
-
-
 // SHARED HELPER - Birthday Voucher logic
 async function issueBirthdayVoucherIfEligible(
+    eventPath: string,
     memberId: string,
     memberData: admin.firestore.DocumentData
 ): Promise<boolean> {
     const dob: string = memberData.dateOfBirth ?? "";
-    if (!dob) {
-        logger.warn(`[Birthday Voucher] Member ${memberId} has no dateOfBirth. Skipping.`);
-        return false;
-    }
+    if (!dob) return false;
 
     const parts = dob.split("-");
-    if (parts.length !== 3) {
-        logger.warn(`[Birthday Voucher] Member ${memberId} has invalid dateOfBirth format: ${dob}. Skipping.`);
-        return false;
-    }
+    if (parts.length !== 3) return false;
 
     const dobDay = parseInt(parts[0], 10);
     const dobMonth = parseInt(parts[1], 10);
@@ -74,37 +60,25 @@ async function issueBirthdayVoucherIfEligible(
     const todayDay = nowWIB.getUTCDate();
     const todayYear = nowWIB.getUTCFullYear();
 
-    if (finalMonth !== todayMonth || finalDay !== todayDay) {
-        return false;
-    }
+    if (finalMonth !== todayMonth || finalDay !== todayDay) return false;
 
     const existingSnap = await db
-        .collection(VOUCHER_COLLECTION)
+        .collection(getCol(VOUCHER_COLLECTION, eventPath))
         .where("userId", "==", memberId)
         .where("type", "==", "BIRTHDAY")
         .where("year", "==", todayYear)
         .limit(1)
         .get();
 
-    if (!existingSnap.empty) {
-        logger.info(
-            `[Birthday Voucher] Member ${memberId} already has a birthday voucher for ${todayYear}. Skipping.`
-        );
-        return false;
-    }
+    if (!existingSnap.empty) return false;
 
-    const expireWIB = new Date(
-        Date.UTC(todayYear, nowWIB.getUTCMonth(), todayDay, 16, 59, 59)
-    );
-
+    const expireWIB = new Date(Date.UTC(todayYear, nowWIB.getUTCMonth(), todayDay, 16, 59, 59));
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     let randomCode = '';
-    for (let i = 0; i < 4; i++) {
-        randomCode += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
+    for (let i = 0; i < 4; i++) { randomCode += chars.charAt(Math.floor(Math.random() * chars.length)); }
     const voucherId = randomCode;
 
-    await db.collection(VOUCHER_COLLECTION).add({
+    await db.collection(getCol(VOUCHER_COLLECTION, eventPath)).add({
         userId: memberId,
         userName: memberData.fullName ?? "",
         voucherName: "Hadiah Ulang Tahun 🎂",
@@ -119,417 +93,177 @@ async function issueBirthdayVoucherIfEligible(
         lastUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    logger.info(
-        `[Birthday Voucher] Issued voucher "${voucherId}" for member ${memberId} (${memberData.fullName}).`
-    );
+    logger.info(`[Birthday Voucher] Issued voucher "${voucherId}" for ${memberId}`);
     return true;
 }
 
 // FUNCTION 1: Daily Scheduler (Birthday)
 export const birthdayVoucherScheduler = onSchedule(
-    {
-        schedule: "1 17 * * *", 
-        timeZone: "Asia/Jakarta",
-        region: "us-central1",
-    },
+    { schedule: "1 17 * * *", timeZone: "Asia/Jakarta", region: "us-central1" },
     async () => {
-        logger.info("[Birthday Voucher Scheduler] Starting daily birthday check...");
         const membersSnap = await db.collection("Members").get();
-        if (membersSnap.empty) return;
-
-        let issued = 0;
         for (const memberDoc of membersSnap.docs) {
-            const wasIssued = await issueBirthdayVoucherIfEligible(memberDoc.id, memberDoc.data());
-            if (wasIssued) issued++;
-        }
-        logger.info(`[Birthday Voucher Scheduler] Done. Issued ${issued} voucher(s).`);
-    }
-);
-
-// FUNCTION 2: onCreate Trigger (Birthday)
-export const onMemberCreated = onDocumentCreated(
-    {
-        document: "Members/{memberId}",
-        region: "us-central1",
-    },
-    async (event) => {
-        const memberId = event.params.memberId;
-        const memberData = event.data?.data();
-        if (!memberData) return;
-
-        const wasIssued = await issueBirthdayVoucherIfEligible(memberId, memberData);
-        if (wasIssued) {
-            logger.info(`[Birthday Voucher onCreate] Happy Birthday! Voucher issued on registration.`);
+            await issueBirthdayVoucherIfEligible("Members", memberDoc.id, memberDoc.data());
         }
     }
 );
+
+// SHARED LOGIC for onMemberCreated
+async function onMemberCreatedLogic(event: any) {
+    const memberId = event.params.memberId;
+    const memberData = event.data?.data();
+    if (!memberData) return;
+    await issueBirthdayVoucherIfEligible(event.document, memberId, memberData);
+}
+
+export const onMemberCreated = onDocumentCreated({ document: "Members/{memberId}", region: "us-central1" }, onMemberCreatedLogic);
+export const onMemberCreatedTesting = onDocumentCreated({ document: "zTesting_Members/{memberId}", region: "us-central1" }, onMemberCreatedLogic);
 
 // FUNCTION 3: Monthly Reward Distribution
 export const distributeMonthlyRewards = onSchedule(
-    {
-        schedule: "0 0 1 * *", 
-        timeZone: "Asia/Jakarta",
-        region: "us-central1"
-    },
+    { schedule: "0 0 1 * *", timeZone: "Asia/Jakarta", region: "us-central1" },
     async () => {
         const now = new Date();
         const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
         const prevMonthStr = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, "0")}`;
-
         try {
             const [compDoc, membersSnap] = await Promise.all([
                 db.collection("competitionRecords").doc(prevMonthStr).get(),
                 db.collection("Members").get(),
             ]);
-
             if (!compDoc.exists) return;
-
             const records = compDoc.data() || {};
             const memberMap = new Map();
             membersSnap.forEach((doc) => memberMap.set(doc.id, doc.data()));
-
             const categoriesMap = new Map<string, any[]>();
             for (const [memberId, stats] of Object.entries(records)) {
                 const memberData = memberMap.get(memberId);
                 if (!memberData) continue;
                 const category = memberData.category || "Umum";
                 const points = (stats as any).customerPoints || 0;
-                const numberOfTransaction = (stats as any).numberOfTransaction || 0;
-                const amountSpent = (stats as any).amountSpent || 0;
-                
                 if (points > 0) {
                     if (!categoriesMap.has(category)) categoriesMap.set(category, []);
-                    categoriesMap.get(category)!.push({
-                        id: memberId,
-                        name: memberData.fullName || memberData.name || "Member",
-                        points: points,
-                        numberOfTransaction: numberOfTransaction,
-                        amountSpent: amountSpent,
-                    });
+                    categoriesMap.get(category)!.push({ id: memberId, name: memberData.fullName || "Member", points });
                 }
             }
-
-            // New prizes apply starting from May 2026 (distributed in June)
-            // Anything before May 2026 (e.g., April) uses the old prizes.
-            const prizes = prevMonthStr >= "2026-05" 
-                ? [50000, 25000, 15000] 
-                : [25000, 15000, 10000];
+            const prizes = [25000, 15000, 10000];
             const batch = db.batch();
-            const currentMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
-
-            let totalVouchers = 0;
-            const generateShortId = () => {
-                const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-                let randomCode = '';
-                for (let i = 0; i < 4; i++) {
-                    randomCode += chars.charAt(Math.floor(Math.random() * chars.length));
-                }
-                return randomCode;
-            };
-
             for (const [category, participants] of categoriesMap.entries()) {
-                participants.sort((a, b) => {
-                    if (b.points !== a.points) return b.points - a.points;
-                    if (b.numberOfTransaction !== a.numberOfTransaction) return b.numberOfTransaction - a.numberOfTransaction;
-                    return b.amountSpent - a.amountSpent;
-                });
-                const winners = participants.slice(0, 3);
-                winners.forEach((winner, index) => {
-                    const rank = index + 1;
-                    const prizeValue = prizes[index];
-                    const shortVoucherId = generateShortId();
+                participants.sort((a, b) => b.points - a.points);
+                participants.slice(0, 3).forEach((winner, index) => {
                     const newVoucherRef = db.collection("vouchers").doc();
-
                     batch.set(newVoucherRef, {
                         userId: winner.id,
-                        nama: winner.name,
                         type: "competitionReward",
-                        value: prizeValue,
+                        value: prizes[index],
                         status: "READY_TO_CLAIM",
-                        transactionRequirement: 10000, 
-                        activeDate: admin.firestore.Timestamp.fromDate(now),
-                        expireDate: admin.firestore.Timestamp.fromDate(currentMonthEnd),
                         createdAt: admin.firestore.FieldValue.serverTimestamp(),
-                        lastUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                        voucherName: `Juara ${rank} ${category} - ${prevMonthStr}`,
-                        voucherId: shortVoucherId,
+                        voucherName: `Juara ${index + 1} ${category} - ${prevMonthStr}`,
                     });
-                    totalVouchers++;
                 });
             }
-
-            if (totalVouchers > 0) await batch.commit();
-        } catch (error) {
-            logger.error("Error during reward distribution:", error);
-        }
+            await batch.commit();
+        } catch (e) { logger.error(e); }
     }
 );
 
 // FUNCTION 4: Expired Voucher Cleanup
 export const expiredVoucherCleanup = onSchedule(
-    {
-        schedule: "5 0 * * *", 
-        timeZone: "Asia/Jakarta",
-        region: "us-central1"
-    },
+    { schedule: "5 0 * * *", timeZone: "Asia/Jakarta", region: "us-central1" },
     async () => {
         const now = admin.firestore.Timestamp.now();
-        try {
-            const expiredSnap = await db.collection(VOUCHER_COLLECTION)
-                .where("status", "==", "READY_TO_CLAIM")
-                .where("expireDate", "<", now)
-                .get();
-
-            if (expiredSnap.empty) return;
-
-            const batch = db.batch();
-            let count = 0;
-            expiredSnap.forEach(doc => {
-                batch.update(doc.ref, {
-                    status: "EXPIRED",
-                    lastUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
-                });
-                count++;
-            });
-            if (count > 0) await batch.commit();
-        } catch (error) {
-            logger.error("Error during expired voucher cleanup:", error);
-        }
+        const expiredSnap = await db.collection(VOUCHER_COLLECTION).where("status", "==", "READY_TO_CLAIM").where("expireDate", "<", now).get();
+        const batch = db.batch();
+        expiredSnap.forEach(doc => batch.update(doc.ref, { status: "EXPIRED", lastUpdatedAt: admin.firestore.FieldValue.serverTimestamp() }));
+        await batch.commit();
     }
 );
 
-// ══════════════════════════════════════════════════════════════════════════════
 // PUSH NOTIFICATION HELPERS
-// ══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Send an FCM push notification to all devices registered under a member.
- * Automatically cleans up any invalid/expired tokens.
- */
-async function sendPushToMember(
-    memberId: string,
-    title: string,
-    body: string,
-    data?: Record<string, string>
-): Promise<void> {
-    const memberSnap = await db.collection("Members").doc(memberId).get();
+async function sendPushToMember(eventPath: string, memberId: string, title: string, body: string, data?: Record<string, string>) {
+    const memberSnap = await db.collection(getCol("Members", eventPath)).doc(memberId).get();
     if (!memberSnap.exists) return;
-
     const tokens: string[] = memberSnap.data()?.fcmTokens ?? [];
     if (tokens.length === 0) return;
-
-    const message: admin.messaging.MulticastMessage = {
-        tokens,
-        notification: { title, body },
-        data: data ?? {},
-        webpush: {
-            notification: {
-                icon: "/icons/icon-192.png",
-                badge: "/icons/icon-192.png",
-                vibrate: [200, 100, 200] as any,
-            },
-        },
-    };
-
+    const message: admin.messaging.MulticastMessage = { tokens, notification: { title, body }, data: data ?? {} };
     const response = await admin.messaging().sendEachForMulticast(message);
-    logger.info(
-        `[Push] Sent to ${memberId}: ${response.successCount} success, ${response.failureCount} failure`
-    );
-
-    // Clean up invalid tokens
     const tokensToRemove: string[] = [];
     response.responses.forEach((res, idx) => {
-        if (
-            res.error &&
-            (res.error.code === "messaging/registration-token-not-registered" ||
-                res.error.code === "messaging/invalid-registration-token")
-        ) {
+        if (res.error && (res.error.code === "messaging/registration-token-not-registered" || res.error.code === "messaging/invalid-registration-token")) {
             tokensToRemove.push(tokens[idx]);
         }
     });
-
     if (tokensToRemove.length > 0) {
-        await db
-            .collection("Members")
-            .doc(memberId)
-            .update({
-                fcmTokens: admin.firestore.FieldValue.arrayRemove(
-                    ...tokensToRemove
-                ),
-            });
-        logger.info(
-            `[Push] Removed ${tokensToRemove.length} stale token(s) for ${memberId}`
-        );
+        await db.collection(getCol("Members", eventPath)).doc(memberId).update({ fcmTokens: admin.firestore.FieldValue.arrayRemove(...tokensToRemove) });
     }
 }
 
-// ── FUNCTION 5: Notify member when points increase ───────────────────────────
-// Triggers whenever a Members document is updated.
-// Compares old vs new "points" field; if points went up, sends a push
-// notification including: points added, new total, and any redeemable vouchers.
-export const onPointsUpdated = onDocumentUpdated(
-    {
-        document: "Members/{memberId}",
-        region: "us-central1",
-    },
-    async (event) => {
-        const memberId = event.params.memberId;
-        const beforeData = event.data?.before.data();
-        const afterData = event.data?.after.data();
-        if (!beforeData || !afterData) return;
+// SHARED LOGIC for onPointsUpdated
+async function onPointsUpdatedLogic(event: any) {
+    const memberId = event.params.memberId;
+    const beforeData = event.data?.before.data();
+    const afterData = event.data?.after.data();
+    if (!beforeData || !afterData) return;
+    const oldPoints = beforeData.points ?? 0;
+    const newPoints = afterData.points ?? 0;
+    const pointsAdded = newPoints - oldPoints;
+    if (pointsAdded <= 0) return;
+    const [vouchersSnap, vouchersSingularSnap] = await Promise.all([
+        db.collection(getCol("vouchers", event.document)).where("userId", "==", memberId).where("status", "==", "READY_TO_CLAIM").get(),
+        db.collection(getCol("voucher", event.document)).where("userId", "==", memberId).where("status", "==", "READY_TO_CLAIM").get(),
+    ]);
 
-        const oldPoints: number = beforeData.points ?? 0;
-        const newPoints: number = afterData.points ?? 0;
-        const pointsAdded = newPoints - oldPoints;
+    const redeemableVouchers: { name: string; value: number }[] = [];
+    const addVoucher = (doc: admin.firestore.QueryDocumentSnapshot) => {
+        const d = doc.data();
+        const expireDate = d.expireDate?.toDate?.();
+        if (expireDate && expireDate < new Date()) return;
+        redeemableVouchers.push({ name: d.voucherName || "Voucher", value: d.value || 0 });
+    };
+    vouchersSnap.forEach(addVoucher);
+    vouchersSingularSnap.forEach(addVoucher);
 
-        // Only fire when points have *increased*
-        if (pointsAdded <= 0) return;
-
-        logger.info(
-            `[onPointsUpdated] ${memberId}: ${oldPoints} → ${newPoints} (+${pointsAdded})`
-        );
-
-        // Query redeemable vouchers (READY_TO_CLAIM) for this member
-        const [vouchersSnap, vouchersSingularSnap] = await Promise.all([
-            db
-                .collection("vouchers")
-                .where("userId", "==", memberId)
-                .where("status", "==", "READY_TO_CLAIM")
-                .get(),
-            db
-                .collection("voucher")
-                .where("userId", "==", memberId)
-                .where("status", "==", "READY_TO_CLAIM")
-                .get(),
-        ]);
-
-        const redeemableVouchers: { name: string; value: number }[] = [];
-        const addVoucher = (doc: admin.firestore.QueryDocumentSnapshot) => {
-            const d = doc.data();
-            // Only include non-expired vouchers
-            const expireDate = d.expireDate?.toDate?.();
-            if (expireDate && expireDate < new Date()) return;
-            redeemableVouchers.push({
-                name: d.voucherName || "Voucher",
-                value: d.value || 0,
-            });
-        };
-        vouchersSnap.forEach(addVoucher);
-        vouchersSingularSnap.forEach(addVoucher);
-
-        // Build notification body
-        let body = `+${pointsAdded} poin! Total poin Anda sekarang: ${newPoints} ⭐`;
-
-        if (redeemableVouchers.length > 0) {
-            body += "\n\n🎁 Voucher siap diklaim:";
-            redeemableVouchers.forEach((v) => {
-                body += `\n• ${v.name} (Rp${v.value.toLocaleString("id-ID")})`;
-            });
-        }
-
-        await sendPushToMember(
-            memberId,
-            "Poin Bertambah! 🎉",
-            body,
-            {
-                type: "points_update",
-                pointsAdded: String(pointsAdded),
-                newTotal: String(newPoints),
-                tag: "points-update",
-            }
-        );
-    }
-);
-
-// ── FUNCTION 6: Notify member when they achieve a voucherGroup voucher ───────
-// Triggers when a new document is created in the "vouchers" collection.
-// If the voucher has a voucherGroupId (meaning it was earned from a campaign),
-// send a congratulatory push notification.
-export const onVoucherGroupAchieved = onDocumentCreated(
-    {
-        document: "vouchers/{voucherId}",
-        region: "us-central1",
-    },
-    async (event) => {
-        const voucherData = event.data?.data();
-        if (!voucherData) return;
-
-        const memberId = voucherData.userId;
-        if (!memberId) return;
-
-        // Only notify for voucherGroup-based vouchers (campaign achievements)
-        // Skip competition rewards and birthday vouchers — those have their own context.
-        const voucherGroupId = voucherData.voucherGroupId;
-        if (!voucherGroupId) return;
-
-        const voucherName = voucherData.voucherName || "Voucher";
-        const value = voucherData.value || 0;
-        const status = voucherData.status || "";
-
-        // Only notify if the voucher is ready to claim
-        if (status !== "READY_TO_CLAIM") return;
-
-        const body =
-            `Selamat! Anda berhasil meraih voucher "${voucherName}" ` +
-            `senilai Rp${value.toLocaleString("id-ID")}! ` +
-            `Buka aplikasi untuk mengklaim. 🎊`;
-
-        await sendPushToMember(
-            memberId,
-            "Voucher Baru! 🎁",
-            body,
-            {
-                type: "voucher_achieved",
-                voucherName: voucherName,
-                tag: "voucher-achieved",
-            }
-        );
-
-        logger.info(
-            `[onVoucherGroupAchieved] Notified ${memberId} about voucher "${voucherName}"`
-        );
-    }
-);
-
-// ── FUNCTION 7: Record Transaction History ───────────────────────────────────
-// Triggers when a new document is created in ANY "Status" collection (root or nested).
-// This captures the order items and records the points earned for the transaction.
-export const onTransactionStatusCreated = onDocumentCreated(
-    {
-        // Using {**} allows it to trigger on both root /Status/{id} 
-        // AND nested /Canteens/{cId}/Status/{id}
-        document: "{path=**}/Status/{statusId}",
-        region: "us-central1",
-    },
-    async (event) => {
-        const data = event.data?.data();
-        if (!data) return;
-
-        // Only process if it's a member
-        if (!data.isMember || !data.memberId) return;
-
-        const memberId = data.memberId;
-        const total = data.total || data.subTotal || 0;
-        const orderItems = data.orderItems || [];
-        
-        // POS usually awards 1 point per Rp 1.000 spent. 
-        const pointsAdded = Math.floor(total / 1000); 
-
-        // Save to pointTransactions collection
-        await db.collection("pointTransactions").add({
-            memberId: memberId,
-            transactionId: event.params.statusId,
-            totalAmount: total,
-            pointsAdded: pointsAdded,
-            orderItems: orderItems,
-            timestamp: data.waktuPesan || admin.firestore.FieldValue.serverTimestamp(),
-            canteenId: data.canteenId || "",
-            paymentMethod: data.paymentMethod || "",
-            transactionMethod: data.transactionMethod || "",
-            sourcePath: event.document, // Helpful for debugging which branch it came from
+    let body = `+${pointsAdded} poin! Total poin: ${newPoints} ⭐`;
+    if (redeemableVouchers.length > 0) {
+        body += "\n\n🎁 Voucher siap diklaim:";
+        redeemableVouchers.forEach((v) => {
+            body += `\n• ${v.name} (Rp${v.value.toLocaleString("id-ID")})`;
         });
-
-        logger.info(`[onTransactionStatusCreated] Recorded transaction history for ${memberId}, points: ${pointsAdded}`);
     }
-);
+    await sendPushToMember(event.document, memberId, "Poin Bertambah! 🎉", body, { type: "points_update" });
+}
 
+export const onPointsUpdated = onDocumentUpdated({ document: "Members/{memberId}", region: "us-central1" }, onPointsUpdatedLogic);
+export const onPointsUpdatedTesting = onDocumentUpdated({ document: "zTesting_Members/{memberId}", region: "us-central1" }, onPointsUpdatedLogic);
+
+// SHARED LOGIC for onVoucherGroupAchieved
+async function onVoucherGroupAchievedLogic(event: any) {
+    const data = event.data?.data();
+    if (!data || !data.userId || !data.voucherGroupId || data.status !== "READY_TO_CLAIM") return;
+    const body = `Selamat! Anda berhasil meraih voucher "${data.voucherName}"! 🎊`;
+    await sendPushToMember(event.document, data.userId, "Voucher Baru! 🎁", body, { type: "voucher_achieved" });
+}
+
+export const onVoucherGroupAchieved = onDocumentCreated({ document: "vouchers/{voucherId}", region: "us-central1" }, onVoucherGroupAchievedLogic);
+export const onVoucherGroupAchievedTesting = onDocumentCreated({ document: "zTesting_vouchers/{voucherId}", region: "us-central1" }, onVoucherGroupAchievedLogic);
+
+// SHARED LOGIC for onTransactionStatusCreated
+async function onTransactionStatusCreatedLogic(event: any) {
+    const data = event.data?.data();
+    if (!data || !data.isMember || !data.memberId) return;
+    const total = data.total || data.subTotal || 0;
+    const pointsAdded = Math.floor(total / 10000); 
+    await db.collection(getCol("pointTransactions", event.document)).add({
+        memberId: data.memberId,
+        transactionId: event.params.statusId || event.params.orderId,
+        totalAmount: total,
+        pointsAdded: pointsAdded,
+        orderItems: data.orderItems || [],
+        timestamp: data.waktuPesan || admin.firestore.FieldValue.serverTimestamp(),
+        sourcePath: event.document,
+    });
+}
+
+export const onTransactionStatusCreated = onDocumentCreated({ document: "{path=**}/Status/{statusId}", region: "us-central1" }, onTransactionStatusCreatedLogic);
+export const onTransactionStatusCreatedTesting = onDocumentCreated({ document: "zTesting_Status/{statusId}", region: "us-central1" }, onTransactionStatusCreatedLogic);
+export const onSelfOrderCreatedTesting = onDocumentCreated({ document: "zTesting_SelfOrders/{statusId}", region: "us-central1" }, onTransactionStatusCreatedLogic);

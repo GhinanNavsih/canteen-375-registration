@@ -1,6 +1,7 @@
 import { getMessaging, getToken, onMessage, type Messaging } from "firebase/messaging";
 import { getApps, getApp } from "firebase/app";
-import { doc, setDoc, arrayUnion, arrayRemove } from "firebase/firestore";
+import { setDoc, arrayUnion, arrayRemove } from "firebase/firestore";
+import { doc } from "@/lib/firebase";
 import { db } from "./firebase";
 
 // ── VAPID Key ────────────────────────────────────────────────────────────────

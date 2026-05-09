@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useMember } from "@/context/MemberContext";
 import Navbar from "@/components/Navbar";
 import { db } from "@/lib/firebase";
-import { doc, collection, query, where, onSnapshot } from "firebase/firestore";
+import { query, where, onSnapshot } from "firebase/firestore";
+import { doc, collection } from "@/lib/firebase";
 import { CompetitionRecord, Member, Category } from "@/types/member";
 import { VoucherGroup } from "@/types/voucher";
 
