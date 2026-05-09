@@ -6,7 +6,7 @@ import { useMember } from "@/context/MemberContext";
 
 export default function Navbar() {
   const pathname = usePathname();
-  const { member, isAdmin, logoutMember } = useMember();
+  const { member, isAdmin, loading, logoutMember } = useMember();
 
   const isActive = (path: string) => {
     return pathname === path || pathname?.startsWith(path + "/");
@@ -17,7 +17,7 @@ export default function Navbar() {
       <div className="nav-container">
         <div className="nav-links">
           {/* ── Admin links ── */}
-          {isAdmin && (
+          {!loading && isAdmin && (
             <>
               <Link href="/admin/menu" className={`nav-link ${isActive("/admin/menu") ? "active" : ""}`}>
                 🍽️ Menu Manager
@@ -32,7 +32,7 @@ export default function Navbar() {
           )}
 
           {/* ── Member links ── */}
-          {!isAdmin && member && (
+          {!loading && !isAdmin && member && (
             <>
               <Link href="/dashboard" className={`nav-link ${isActive("/dashboard") ? "active" : ""}`}>
                 Dasboard
@@ -53,7 +53,7 @@ export default function Navbar() {
           )}
 
           {/* ── Public links (for non-logged-in users) ── */}
-          {!isAdmin && !member && (
+          {!loading && !isAdmin && !member && (
             <Link href="/about" className={`nav-link ${isActive("/about") ? "active" : ""}`}>
                 Tentang
             </Link>
@@ -61,7 +61,9 @@ export default function Navbar() {
         </div>
 
         {/* ── Auth button ── */}
-        {member || isAdmin ? (
+        {loading ? (
+          <div className="nav-loading-spinner" />
+        ) : (member || isAdmin ? (
           <button onClick={logoutMember} className="btn-auth">
             Logout
           </button>
@@ -69,7 +71,7 @@ export default function Navbar() {
           <Link href="/login" className="btn-auth">
             Login
           </Link>
-        )}
+        ))}
       </div>
     </nav>
   );

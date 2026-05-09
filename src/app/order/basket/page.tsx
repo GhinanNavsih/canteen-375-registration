@@ -441,11 +441,27 @@ export default function BasketPage() {
             return (
               <div key={cartItemId} className="summary-row">
                 <div className="summary-item-info">
-                  <span className="summary-item-name">{menuItem.namaMenu} <span className="text-muted">x{dineInQuantity + takeAwayQuantity}</span></span>
+                  <span className="summary-item-name">
+                    {menuItem.namaMenu} <span className="text-muted">x{dineInQuantity + takeAwayQuantity}</span>
+                    <span className="summary-item-type">
+                      {dineInQuantity > 0 && takeAwayQuantity > 0 ? (
+                        ` (${dineInQuantity} Dine-in, ${takeAwayQuantity} Take-away)`
+                      ) : dineInQuantity > 0 ? (
+                        " (Dine-in)"
+                      ) : (
+                        " (Take-away)"
+                      )}
+                    </span>
+                  </span>
                   {selectedOptions.length > 0 && (
                     <div className="summary-item-options">
                       {selectedOptions.map((o, i) => (
-                        <span key={i} className="text-muted block">{o.optionName}</span>
+                        <div key={i} className="summary-option-row">
+                          <span className="text-muted">• {o.optionName}</span>
+                          {o.priceAdjustment > 0 && (
+                            <span className="summary-option-price"> (+{formatPrice(o.priceAdjustment)})</span>
+                          )}
+                        </div>
                       ))}
                     </div>
                   )}
@@ -768,7 +784,9 @@ export default function BasketPage() {
         .fee-info { font-size: 0.8rem; color: #aaa; cursor: help; }
         .summary-item-info { display: flex; flex-direction: column; gap: 0.2rem; }
         .summary-item-name { font-weight: 600; }
+        .summary-item-type { font-size: 0.8rem; color: #C51720; font-weight: 700; opacity: 0.9; }
         .summary-item-options { display: flex; flex-direction: column; gap: 0.1rem; padding-left: 0.5rem; border-left: 2px solid #ece8e3; margin-top: 0.2rem; }
+        .summary-option-price { font-size: 0.75rem; color: #C51720; font-weight: 700; }
         .text-muted { color: #8d6e63; font-size: 0.8rem; }
         .block { display: block; }
         .summary-divider {

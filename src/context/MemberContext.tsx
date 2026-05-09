@@ -28,6 +28,11 @@ export function MemberProvider({ children }: { children: React.ReactNode }) {
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (user) => {
             console.log("[MemberContext] Auth state changed. User:", user?.email || "logged out");
+            
+            // Set loading to true immediately when auth state changes.
+            // This prevents race conditions where the UI might think the user is logged out
+            // while we are still fetching their profile from Firestore.
+            setLoading(true);
             setFirebaseUser(user);
 
             if (user) {

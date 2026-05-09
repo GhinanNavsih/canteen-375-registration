@@ -162,11 +162,28 @@ export default function HistoryPage() {
                                 <div className="r-item-main">
                                   <span className="r-item-qty">{qty}x</span>
                                   <div className="r-item-details">
-                                    <span className="r-item-name">{item.namaPesanan}</span>
+                                    <div className="r-item-name-row">
+                                      <span className="r-item-name">{item.namaPesanan}</span>
+                                      <span className="r-item-type">
+                                        {item.dineInQuantity > 0 && item.takeAwayQuantity > 0 ? (
+                                          ` (${item.dineInQuantity} Dine-in, ${item.takeAwayQuantity} Take-away)`
+                                        ) : item.dineInQuantity > 0 ? (
+                                          " (Dine-in)"
+                                        ) : (
+                                          " (Take-away)"
+                                        )}
+                                      </span>
+                                    </div>
                                     {item.selectedOptions && item.selectedOptions.length > 0 && (
                                       <div className="r-item-options">
                                         {item.selectedOptions.map((opt, oIdx) => (
-                                          <span key={oIdx}>• {opt.optionName}</span>
+                                          <div key={oIdx} className="r-option-row">
+                                            <span className="r-option-bullet">•</span>
+                                            <span className="r-option-name">{opt.optionName}</span>
+                                            {opt.priceAdjustment && opt.priceAdjustment > 0 ? (
+                                              <span className="r-option-price">(+{formatPrice(opt.priceAdjustment)})</span>
+                                            ) : null}
+                                          </div>
                                         ))}
                                       </div>
                                     )}
@@ -420,12 +437,38 @@ export default function HistoryPage() {
           font-weight: 600;
           color: #2d241d;
         }
+        .r-item-type {
+          font-size: 0.8rem;
+          color: #C51720;
+          font-weight: 700;
+          opacity: 0.9;
+        }
         .r-item-options {
           display: flex;
           flex-direction: column;
+          gap: 0.2rem;
+          margin-top: 0.35rem;
+          padding-left: 0.25rem;
+        }
+        .r-option-row {
+          display: flex;
+          align-items: center;
+          gap: 0.4rem;
           font-size: 0.8rem;
           color: #8d6e63;
-          margin-top: 0.15rem;
+          line-height: 1.2;
+        }
+        .r-option-bullet {
+          color: #d4a373;
+          font-weight: 800;
+        }
+        .r-option-name {
+          font-weight: 500;
+        }
+        .r-option-price {
+          font-weight: 700;
+          color: #C51720;
+          font-size: 0.75rem;
         }
         .r-item-price {
           font-weight: 600;
