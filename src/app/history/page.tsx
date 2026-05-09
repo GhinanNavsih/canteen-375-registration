@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { query, where, orderBy, limit, getDocs } from "firebase/firestore";
+import { query, where, orderBy, limit, onSnapshot } from "firebase/firestore";
 import { collection } from "@/lib/firebase";
 import { db } from "@/lib/firebase";
 import { useMember } from "@/context/MemberContext";
@@ -25,7 +25,10 @@ interface OrderItem {
 interface TransactionHistory {
   id: string;
   transactionId: string;
-  totalAmount: number;
+  total: number;
+  subTotal?: number;
+  takeAwayFee?: number;
+  totalAmount?: number; // fallback for legacy records
   pointsAdded: number;
   orderItems: OrderItem[];
   timestamp: any;
@@ -45,29 +48,34 @@ export default function HistoryPage() {
       return;
     }
 
-    const fetchHistory = async () => {
-      if (!member) return;
-      try {
-        const q = query(
-          collection(db, "pointTransactions"),
-          where("memberId", "==", member.id.trim()),
-          orderBy("timestamp", "desc"),
-          limit(20)
-        );
-        const querySnapshot = await getDocs(q);
+    if (!member) return;
+
+    const q = query(
+      collection(db, "pointTransactions"),
+      where("memberId", "==", member.id.trim()),
+      orderBy("timestamp", "desc"),
+      limit(20)
+    );
+
+    // Set up real-time listener
+    const unsubscribe = onSnapshot(
+      q,
+      (querySnapshot: any) => {
         const fetched: TransactionHistory[] = [];
-        querySnapshot.forEach((doc) => {
+        querySnapshot.forEach((doc: any) => {
           fetched.push({ id: doc.id, ...doc.data() } as TransactionHistory);
         });
         setHistory(fetched);
-      } catch (error) {
-        console.error("Error fetching history:", error);
-      } finally {
+        setLoading(false);
+      },
+      (error: any) => {
+        console.error("Error listening to history:", error);
         setLoading(false);
       }
-    };
+    );
 
-    fetchHistory();
+    // Cleanup listener on unmount
+    return () => unsubscribe();
   }, [member, sessionLoading, router]);
 
   const toggleExpand = (id: string) => {
@@ -137,7 +145,7 @@ export default function HistoryPage() {
                         </div>
                       </div>
                       <div className="hc-right">
-                        <span className="hc-total">{formatPrice(tx.totalAmount)}</span>
+                        <span className="hc-total">{formatPrice((tx.total ?? tx.totalAmount) || 0)}</span>
                         {tx.pointsAdded > 0 && (
                           <span className="hc-points">+{tx.pointsAdded} Poin ⭐</span>
                         )}
@@ -199,11 +207,17 @@ export default function HistoryPage() {
                         <div className="receipt-footer">
                           <div className="r-footer-row">
                             <span>Subtotal</span>
-                            <span>{formatPrice(tx.totalAmount)}</span>
+                            <span>{formatPrice((tx.subTotal ?? (tx.total ?? tx.totalAmount)) || 0)}</span>
                           </div>
+                          {(tx.takeAwayFee ?? 0) > 0 && (
+                            <div className="r-footer-row">
+                              <span>Biaya Take-away</span>
+                              <span>{formatPrice(tx.takeAwayFee || 0)}</span>
+                            </div>
+                          )}
                           <div className="r-footer-row total">
                             <span>Total</span>
-                            <span>{formatPrice(tx.totalAmount)}</span>
+                            <span>{formatPrice((tx.total ?? tx.totalAmount) || 0)}</span>
                           </div>
                           <div className="r-points-earned">
                             ⭐ Anda mendapatkan <strong>{tx.pointsAdded} Poin</strong> dari transaksi ini!

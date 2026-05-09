@@ -23,30 +23,32 @@ const storage = getStorage(app);
 
 import { collection as fsCollection, doc as fsDoc, CollectionReference, DocumentReference, DocumentData } from "firebase/firestore";
 
-export const collection = (instanceOrRef: any, ...pathSegments: string[]): CollectionReference<DocumentData> => {
+export const collection = (instanceOrRef: any, path: string, ...pathSegments: string[]): CollectionReference<DocumentData> => {
+  let finalPath = path;
   if (typeof window !== "undefined" && localStorage.getItem("zTestingMode") === "true") {
-    if (instanceOrRef === db && pathSegments.length > 0) {
-      const parts = pathSegments[0].split('/');
+    if (instanceOrRef === db) {
+      const parts = finalPath.split('/');
       if (!parts[0].startsWith('zTesting_')) {
         parts[0] = `zTesting_${parts[0]}`;
-        pathSegments[0] = parts.join('/');
+        finalPath = parts.join('/');
       }
     }
   }
-  return fsCollection(instanceOrRef, ...pathSegments);
+  return fsCollection(instanceOrRef, finalPath, ...pathSegments);
 };
 
-export const doc = (instanceOrRef: any, ...pathSegments: string[]): DocumentReference<DocumentData> => {
+export const doc = (instanceOrRef: any, path: string, ...pathSegments: string[]): DocumentReference<DocumentData> => {
+  let finalPath = path;
   if (typeof window !== "undefined" && localStorage.getItem("zTestingMode") === "true") {
-    if (instanceOrRef === db && pathSegments.length > 0) {
-      const parts = pathSegments[0].split('/');
+    if (instanceOrRef === db) {
+      const parts = finalPath.split('/');
       if (!parts[0].startsWith('zTesting_')) {
         parts[0] = `zTesting_${parts[0]}`;
-        pathSegments[0] = parts.join('/');
+        finalPath = parts.join('/');
       }
     }
   }
-  return fsDoc(instanceOrRef, ...pathSegments);
+  return fsDoc(instanceOrRef, finalPath, ...pathSegments);
 };
 
 export { db, rtdb, auth, storage };

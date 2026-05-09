@@ -54,23 +54,41 @@ export async function requestNotificationPermission(
   }
 
   try {
+    // Ensure we are in a secure context
+    if (window.location.protocol !== "https:" && window.location.hostname !== "localhost") {
+      console.warn("[FCM] Messaging requires a secure context (HTTPS or localhost).");
+      return null;
+    }
+
     const permission = await Notification.requestPermission();
     if (permission !== "granted") {
       console.log("[FCM] Notification permission denied.");
       return null;
     }
 
-    // Find the specific registration for the Firebase messaging worker
-    const registrations = await navigator.serviceWorker.getRegistrations();
-    const swRegistration = registrations.find(reg => 
-      reg.active?.scriptURL.includes("firebase-messaging-sw.js")
-    );
+    console.log("[FCM] Attempting to get token with VAPID Key starting with:", VAPID_KEY.substring(0, 10) + "...");
 
+    // Find or register the service worker explicitly
+    let swRegistration = await navigator.serviceWorker.getRegistration("/firebase-messaging-sw.js");
     if (!swRegistration) {
-      console.warn("[FCM] Firebase service worker not found or not active yet.");
-      return null;
+      console.log("[FCM] No SW found, registering...");
+      swRegistration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
     }
 
+    // Wait for the SW to be active. FCM requires an active SW to handle the push subscription.
+    let attempts = 0;
+    while (swRegistration && !swRegistration.active && attempts < 20) {
+      console.log("[FCM] Waiting for SW to activate... attempt", attempts + 1);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      swRegistration = await navigator.serviceWorker.getRegistration("/firebase-messaging-sw.js") || swRegistration;
+      attempts++;
+    }
+
+    if (!swRegistration || !swRegistration.active) {
+      throw new Error("Service Worker could not be activated after multiple attempts.");
+    }
+
+    console.log("[FCM] SW is active, requesting token...");
     const token = await getToken(messaging, {
       vapidKey: VAPID_KEY,
       serviceWorkerRegistration: swRegistration,

@@ -251,14 +251,21 @@ export const onVoucherGroupAchievedTesting = onDocumentCreated({ document: "zTes
 async function onTransactionStatusCreatedLogic(event: any) {
     const data = event.data?.data();
     if (!data || !data.isMember || !data.memberId) return;
-    const total = data.total || data.subTotal || 0;
+
+    const total = data.total || 0;
+    const subTotal = data.subTotal || 0;
+    const takeAwayFee = data.takeAwayFee || 0;
     const pointsAdded = Math.floor(total / 10000); 
+
     await db.collection(getCol("pointTransactions", event.document)).add({
         memberId: data.memberId,
         transactionId: event.params.statusId || event.params.orderId,
-        totalAmount: total,
+        total: total,
+        subTotal: subTotal,
+        takeAwayFee: takeAwayFee,
         pointsAdded: pointsAdded,
         orderItems: data.orderItems || [],
+        paymentMethod: data.paymentMethod || "Pembayaran",
         timestamp: data.waktuPesan || admin.firestore.FieldValue.serverTimestamp(),
         sourcePath: event.document,
     });
