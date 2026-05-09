@@ -492,11 +492,13 @@ export const onVoucherGroupAchieved = onDocumentCreated(
 );
 
 // ── FUNCTION 7: Record Transaction History ───────────────────────────────────
-// Triggers when a new document is created in the "Status" collection.
+// Triggers when a new document is created in ANY "Status" collection (root or nested).
 // This captures the order items and records the points earned for the transaction.
 export const onTransactionStatusCreated = onDocumentCreated(
     {
-        document: "Status/{statusId}",
+        // Using {**} allows it to trigger on both root /Status/{id} 
+        // AND nested /Canteens/{cId}/Status/{id}
+        document: "{path=**}/Status/{statusId}",
         region: "us-central1",
     },
     async (event) => {
@@ -507,10 +509,10 @@ export const onTransactionStatusCreated = onDocumentCreated(
         if (!data.isMember || !data.memberId) return;
 
         const memberId = data.memberId;
-        const total = data.total || 0;
+        const total = data.total || data.subTotal || 0;
         const orderItems = data.orderItems || [];
         
-        // POS usually awards 1 point per Rp 1.000 spent. Adjust this logic if the POS uses a different formula.
+        // POS usually awards 1 point per Rp 1.000 spent. 
         const pointsAdded = Math.floor(total / 1000); 
 
         // Save to pointTransactions collection
@@ -524,6 +526,7 @@ export const onTransactionStatusCreated = onDocumentCreated(
             canteenId: data.canteenId || "",
             paymentMethod: data.paymentMethod || "",
             transactionMethod: data.transactionMethod || "",
+            sourcePath: event.document, // Helpful for debugging which branch it came from
         });
 
         logger.info(`[onTransactionStatusCreated] Recorded transaction history for ${memberId}, points: ${pointsAdded}`);
