@@ -490,3 +490,43 @@ export const onVoucherGroupAchieved = onDocumentCreated(
         );
     }
 );
+
+// ── FUNCTION 7: Record Transaction History ───────────────────────────────────
+// Triggers when a new document is created in the "Status" collection.
+// This captures the order items and records the points earned for the transaction.
+export const onTransactionStatusCreated = onDocumentCreated(
+    {
+        document: "Status/{statusId}",
+        region: "us-central1",
+    },
+    async (event) => {
+        const data = event.data?.data();
+        if (!data) return;
+
+        // Only process if it's a member
+        if (!data.isMember || !data.memberId) return;
+
+        const memberId = data.memberId;
+        const total = data.total || 0;
+        const orderItems = data.orderItems || [];
+        
+        // POS usually awards 1 point per Rp 1.000 spent. Adjust this logic if the POS uses a different formula.
+        const pointsAdded = Math.floor(total / 1000); 
+
+        // Save to pointTransactions collection
+        await db.collection("pointTransactions").add({
+            memberId: memberId,
+            transactionId: event.params.statusId,
+            totalAmount: total,
+            pointsAdded: pointsAdded,
+            orderItems: orderItems,
+            timestamp: data.waktuPesan || admin.firestore.FieldValue.serverTimestamp(),
+            canteenId: data.canteenId || "",
+            paymentMethod: data.paymentMethod || "",
+            transactionMethod: data.transactionMethod || "",
+        });
+
+        logger.info(`[onTransactionStatusCreated] Recorded transaction history for ${memberId}, points: ${pointsAdded}`);
+    }
+);
+

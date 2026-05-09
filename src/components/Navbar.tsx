@@ -46,6 +46,9 @@ export default function Navbar() {
               <Link href="/vouchers" className={`nav-link ${isActive("/vouchers") ? "active" : ""}`}>
                 Voucher
               </Link>
+              <Link href="/history" className={`nav-link ${isActive("/history") ? "active" : ""}`}>
+                Riwayat
+              </Link>
             </>
           )}
 

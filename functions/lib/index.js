@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.onVoucherGroupAchieved = exports.onPointsUpdated = exports.expiredVoucherCleanup = exports.distributeMonthlyRewards = exports.onMemberCreated = exports.birthdayVoucherScheduler = exports.setAdminRole = void 0;
+exports.onTransactionStatusCreated = exports.onVoucherGroupAchieved = exports.onPointsUpdated = exports.expiredVoucherCleanup = exports.distributeMonthlyRewards = exports.onMemberCreated = exports.birthdayVoucherScheduler = exports.setAdminRole = void 0;
 const admin = require("firebase-admin");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
 const firestore_1 = require("firebase-functions/v2/firestore");
@@ -404,5 +404,38 @@ exports.onVoucherGroupAchieved = (0, firestore_1.onDocumentCreated)({
         tag: "voucher-achieved",
     });
     v2_1.logger.info(`[onVoucherGroupAchieved] Notified ${memberId} about voucher "${voucherName}"`);
+});
+// ── FUNCTION 7: Record Transaction History ───────────────────────────────────
+// Triggers when a new document is created in the "Status" collection.
+// This captures the order items and records the points earned for the transaction.
+exports.onTransactionStatusCreated = (0, firestore_1.onDocumentCreated)({
+    document: "Status/{statusId}",
+    region: "us-central1",
+}, async (event) => {
+    var _a;
+    const data = (_a = event.data) === null || _a === void 0 ? void 0 : _a.data();
+    if (!data)
+        return;
+    // Only process if it's a member
+    if (!data.isMember || !data.memberId)
+        return;
+    const memberId = data.memberId;
+    const total = data.total || 0;
+    const orderItems = data.orderItems || [];
+    // POS usually awards 1 point per Rp 1.000 spent. Adjust this logic if the POS uses a different formula.
+    const pointsAdded = Math.floor(total / 1000);
+    // Save to pointTransactions collection
+    await db.collection("pointTransactions").add({
+        memberId: memberId,
+        transactionId: event.params.statusId,
+        totalAmount: total,
+        pointsAdded: pointsAdded,
+        orderItems: orderItems,
+        timestamp: data.waktuPesan || admin.firestore.FieldValue.serverTimestamp(),
+        canteenId: data.canteenId || "",
+        paymentMethod: data.paymentMethod || "",
+        transactionMethod: data.transactionMethod || "",
+    });
+    v2_1.logger.info(`[onTransactionStatusCreated] Recorded transaction history for ${memberId}, points: ${pointsAdded}`);
 });
 //# sourceMappingURL=index.js.map

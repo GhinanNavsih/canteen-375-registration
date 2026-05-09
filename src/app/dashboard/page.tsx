@@ -224,6 +224,15 @@ export default function DashboardPage() {
               </div>
               <div className="points-icon-large">⭐</div>
             </div>
+            
+            <button 
+              className="history-link-btn" 
+              onClick={() => router.push("/history")}
+            >
+              <span className="history-icon">🧾</span>
+              Lihat Riwayat Transaksi
+              <span className="history-arrow">→</span>
+            </button>
           </div>
 
           {(() => {
@@ -525,6 +534,34 @@ export default function DashboardPage() {
         .points-icon-large {
           font-size: 3.5rem;
           filter: drop-shadow(0 4px 10px rgba(0,0,0,0.2));
+        }
+        .history-link-btn {
+          width: 100%;
+          margin-top: 1.5rem;
+          background: #fff8e1;
+          border: 1.5px solid #ffecb3;
+          padding: 1rem;
+          border-radius: 12px;
+          display: flex;
+          align-items: center;
+          gap: 0.8rem;
+          color: #f57f17;
+          font-weight: 700;
+          font-size: 0.95rem;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+        .history-link-btn:hover {
+          background: #ffecb3;
+          transform: translateY(-2px);
+          box-shadow: 0 4px 12px rgba(245, 127, 23, 0.15);
+        }
+        .history-icon {
+          font-size: 1.2rem;
+        }
+        .history-arrow {
+          margin-left: auto;
+          font-size: 1.2rem;
         }
         /* ── Festive Voucher Card ── */
         .campaigns-card {

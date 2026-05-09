@@ -141,6 +141,12 @@ service cloud.firestore {
       allow read, write: if true;
     }
     
+    // ── TRANSACTION HISTORY (MEMBERS) ─────────────────────────────────────────
+    match /pointTransactions/{id} {
+      allow read: if isAuthenticated() && memberIdRefersToAuthUser(resource.data.memberId);
+      allow write: if isAdmin();
+    }
+    
     // ── FEEDBACKS ─────────────────────────────────────────────────────────────
 
     match /feedbacks/{feedbackId} {

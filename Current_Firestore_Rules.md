@@ -13,7 +13,11 @@ service cloud.firestore {
       return isAuthenticated() && (
         request.auth.token.admin == true ||
         request.auth.token.email == "gnavsih1@gmail.com" ||
-        request.auth.token.email == "admin@canteen375.com"
+        request.auth.token.email == "admin@canteen375.com" ||
+        request.auth.token.email == "irene@canteen375.com" ||
+        request.auth.token.email == "amalia@canteen375.com" ||
+        request.auth.token.email == "eka@canteen375.com" ||
+        request.auth.token.email == "dina@canteen375.com"
       );
     }
 
@@ -62,6 +66,12 @@ service cloud.firestore {
         allow read, write, update, delete: if true;
       }
     }
+    match /MonthlyFinancialReport/{id} {
+      allow read, write, update, delete: if true;
+    }
+    match /YearlyFinancialReport/{id} {
+      allow read, write, update, delete: if true;
+    }
     match /Status/{id} { allow read, write, delete, update: if true; }
     match /Expenses/{id} { allow read, write: if isAuthenticated(); }
     match /CashflowSettings/{id} {
@@ -102,22 +112,49 @@ service cloud.firestore {
     match /vouchers/{id} {
       allow read: if isAdmin()
                     || (isAuthenticated() && memberIdRefersToAuthUser(resource.data.userId));
-      allow write: if isAdmin();
+      // POS creates cashback vouchers on behalf of members during order processing.
+      allow create: if isAuthenticated();
+      allow update: if isAdmin()
+                      || (isAuthenticated() && memberIdRefersToAuthUser(resource.data.userId));
+      allow delete: if isAdmin();
+    }
+
+    // ── B2B VOUCHER PROGRAMS ─────────────────────────────────────────────────
+    match /voucherPrograms/{id} {
+      allow read: if isAuthenticated();
+      // POS increments totalRedeemed atomically during order WriteBatch.
+      // Settlement (settleProgram) updates totalSettled and status from POS.
+      allow update: if isAuthenticated();
+      allow create, delete: if isAdmin();
     }
 
     // ── VOUCHER GROUP (CAMPAIGNS) ─────────────────────────────────────────────
     match /voucherGroup/{groupId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin();
+      allow create, delete: if isAdmin();
+      // POS increments totalParticipants on cashback campaigns during order processing.
+      allow update: if isAuthenticated();
     }
 
     // ── COMPETITION RECORDS (LEADERBOARD DATA) ────────────────────────────────
     match /competitionRecords/{monthId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin();
+      // POS writes member scores (customerPoints, amountSpent, numberOfTransaction) during order processing.
+      allow write: if isAuthenticated();
     }
 
+    match /SelfOrders/{orderId} {
+      allow read, write: if true;
+    }
+    
+    // ── TRANSACTION HISTORY (MEMBERS) ─────────────────────────────────────────
+    match /pointTransactions/{id} {
+      allow read: if isAuthenticated() && memberIdRefersToAuthUser(resource.data.memberId);
+      allow write: if isAdmin();
+    }
+    
     // ── FEEDBACKS ─────────────────────────────────────────────────────────────
+
     match /feedbacks/{feedbackId} {
       allow create: if isAuthenticated()
                     && memberIdRefersToAuthUser(request.resource.data.memberId);
@@ -144,7 +181,7 @@ service cloud.firestore {
       }
 
       match /MenuCollection/{menuId} {
-        allow read: if isAuthenticated();
+        allow read: if true;
         allow write: if isAdmin();
       }
 
@@ -238,6 +275,14 @@ service cloud.firestore {
         allow read, write, update, delete: if true;
       }
     }
+    
+    match /zTesting_MonthlyFinancialReport/{id} {
+      allow read, write, update, delete: if true;
+    }
+    
+    match /zTesting_YearlyFinancialReport/{id} {
+      allow read, write, update, delete: if true;
+    }
 
     match /zTesting_Expenses/{id} {
       allow read, write: if true;
@@ -256,6 +301,30 @@ service cloud.firestore {
     }
 
     match /zTesting_CashflowSettings/{id} {
+      allow read, write, update, delete: if true;
+    }
+
+    match /zTesting_competitionRecords/{id} {
+      allow read, write, update, delete: if true;
+    }
+
+    match /zTesting_voucher/{id} {
+      allow read, write, update, delete: if true;
+    }
+
+    match /zTesting_vouchers/{id} {
+      allow read, write, update, delete: if true;
+    }
+
+    match /zTesting_voucherGroup/{id} {
+      allow read, write, update, delete: if true;
+    }
+
+    match /zTesting_voucherPrograms/{id} {
+      allow read, write, update, delete: if true;
+    }
+
+    match /zTesting_MemberLinks/{id} {
       allow read, write, update, delete: if true;
     }
 
