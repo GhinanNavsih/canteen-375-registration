@@ -51,4 +51,4 @@ export const doc = (instanceOrRef: any, path: string, ...pathSegments: string[])
   return fsDoc(instanceOrRef, finalPath, ...pathSegments);
 };
 
-export { db, rtdb, auth, storage };
+export { app, db, rtdb, auth, storage };

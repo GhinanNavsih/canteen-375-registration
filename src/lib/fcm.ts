@@ -1,7 +1,7 @@
-import { getMessaging, getToken, onMessage, type Messaging } from "firebase/messaging";
+import { getMessaging, getToken, deleteToken, onMessage, type Messaging } from "firebase/messaging";
 import { getApps, getApp } from "firebase/app";
 import { setDoc, arrayUnion, arrayRemove } from "firebase/firestore";
-import { doc } from "@/lib/firebase";
+import { doc, app } from "@/lib/firebase";
 import { db } from "./firebase";
 
 // ── VAPID Key ────────────────────────────────────────────────────────────────
@@ -22,7 +22,6 @@ export function getMessagingInstance(): Messaging | null {
   if (messagingInstance) return messagingInstance;
 
   try {
-    const app = getApps().length > 0 ? getApp() : null;
     if (!app) return null;
     messagingInstance = getMessaging(app);
     return messagingInstance;
@@ -69,26 +68,39 @@ export async function requestNotificationPermission(
     console.log("[FCM] Attempting to get token with VAPID Key starting with:", VAPID_KEY.substring(0, 10) + "...");
 
     // Find or register the service worker explicitly
-    let swRegistration = await navigator.serviceWorker.getRegistration("/firebase-messaging-sw.js");
-    if (!swRegistration) {
-      console.log("[FCM] No SW found, registering...");
-      swRegistration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
-    }
+    console.log("[FCM] Registering/Checking Service Worker...");
+    const swRegistration = await navigator.serviceWorker.register("/firebase-messaging-sw.js", {
+      scope: "/"
+    });
 
     // Wait for the SW to be active. FCM requires an active SW to handle the push subscription.
     let attempts = 0;
-    while (swRegistration && !swRegistration.active && attempts < 20) {
+    while (!swRegistration.active && attempts < 10) {
       console.log("[FCM] Waiting for SW to activate... attempt", attempts + 1);
       await new Promise(resolve => setTimeout(resolve, 500));
-      swRegistration = await navigator.serviceWorker.getRegistration("/firebase-messaging-sw.js") || swRegistration;
       attempts++;
     }
 
-    if (!swRegistration || !swRegistration.active) {
-      throw new Error("Service Worker could not be activated after multiple attempts.");
+    if (!swRegistration.active) {
+      throw new Error("Service Worker could not be activated.");
     }
 
-    console.log("[FCM] SW is active, requesting token...");
+    console.log("[FCM] SW is active, clearing any stale tokens/subscriptions...");
+    try {
+      // 1. Unsubscribe from browser push manager directly
+      const subscription = await swRegistration.pushManager.getSubscription();
+      if (subscription) {
+        console.log("[FCM] Found existing push subscription, unsubscribing...");
+        await subscription.unsubscribe();
+      }
+      
+      // 2. Delete Firebase token
+      await deleteToken(messaging);
+    } catch (e) {
+      console.log("[FCM] Cleanup failed or not needed:", e);
+    }
+
+    console.log("[FCM] Requesting new token...");
     const token = await getToken(messaging, {
       vapidKey: VAPID_KEY,
       serviceWorkerRegistration: swRegistration,
