@@ -2,8 +2,8 @@
 // This file MUST live at the root of the public directory and be named exactly
 // "firebase-messaging-sw.js" so that the Firebase SDK can find it.
 
-importScripts("https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js");
-importScripts("https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js");
+importScripts("https://www.gstatic.com/firebasejs/12.13.0/firebase-app-compat.js");
+importScripts("https://www.gstatic.com/firebasejs/12.13.0/firebase-messaging-compat.js");
 
 firebase.initializeApp({
   apiKey: "AIzaSyCZ1oJuagSPQ_9VWiFONeArwxtUsgLGhCA",

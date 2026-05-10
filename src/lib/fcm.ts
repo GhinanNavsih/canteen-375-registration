@@ -8,7 +8,7 @@ import { db } from "./firebase";
 // Generate this from: Firebase Console → Project Settings → Cloud Messaging
 // → Web Push certificates → "Generate key pair"
 // Then paste it here or use an env variable.
-const VAPID_KEY = process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY || "";
+const VAPID_KEY = (process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY || "").trim();
 
 let messagingInstance: Messaging | null = null;
 
@@ -65,6 +65,7 @@ export async function requestNotificationPermission(
       return null;
     }
 
+    console.log("[FCM] VAPID Key length:", VAPID_KEY.length);
     console.log("[FCM] Attempting to get token with VAPID Key starting with:", VAPID_KEY.substring(0, 10) + "...");
 
     // Find or register the service worker explicitly
