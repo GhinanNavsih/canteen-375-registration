@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { getDocs, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
-import { collection, doc } from "@/lib/firebase";
-import { db } from "@/lib/firebase";
+import { getDocs, getDoc, setDoc, serverTimestamp, onSnapshot } from "firebase/firestore";
+import { collection, doc, db, storage } from "@/lib/firebase";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useMember } from "@/context/MemberContext";
 import { useBasket } from "@/context/BasketContext";
 import Navbar from "@/components/Navbar";
@@ -15,7 +15,14 @@ export default function BasketPage() {
   const { basket, totalPrice, totalItems, addToBasket, editBasketItem, updateQuantity, updateNote, removeFromBasket, clearBasket } = useBasket();
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
-  const [orderSuccess, setOrderSuccess] = useState<{ orderCode: string } | null>(null);
+  const [orderSuccess, setOrderSuccess] = useState<{ orderCode: string; docId: string; paymentMethod: "QRIS" | "CASH" } | null>(null);
+  const [paymentVerificationStatus, setPaymentVerificationStatus] = useState<"waiting" | "verified" | "rejected" | null>(null);
+
+  // Checkout modal states
+  const [showConfirmationModal, setShowConfirmationModal] = useState(false);
+  const [selectedMethod, setSelectedMethod] = useState<"QRIS" | "CASH">("QRIS");
+  const [file, setFile] = useState<File | null>(null);
+  const [fileError, setFileError] = useState("");
 
   // Cross-selling state
   const [crossSellItems, setCrossSellItems] = useState<MenuItem[]>([]);
@@ -94,8 +101,44 @@ export default function BasketPage() {
     fetchCrossSellAndOG();
   }, [basket]);
 
-  const handleOrder = async () => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (!selectedFile) {
+      setFile(null);
+      setFileError("");
+      return;
+    }
+
+    // Validate type (image or pdf)
+    const validTypes = ["image/jpeg", "image/png", "image/jpg", "application/pdf"];
+    if (!validTypes.includes(selectedFile.type)) {
+      setFile(null);
+      setFileError("Format file tidak didukung. Harap unggah gambar (JPG/PNG) atau PDF.");
+      return;
+    }
+
+    // Validate size (5MB max)
+    if (selectedFile.size > 5 * 1024 * 1024) {
+      setFile(null);
+      setFileError("Ukuran file terlalu besar. Maksimal 5MB.");
+      return;
+    }
+
+    setFile(selectedFile);
+    setFileError("");
+  };
+
+  const handleOrder = () => {
     if (!member || totalItems === 0) return;
+    setShowConfirmationModal(true);
+  };
+
+  const confirmAndPlaceOrder = async () => {
+    if (!member || totalItems === 0) return;
+    if (selectedMethod === "QRIS" && !file) {
+      setFileError("Harap unggah bukti pembayaran QRIS terlebih dahulu.");
+      return;
+    }
     setSubmitting(true);
 
     try {
@@ -106,6 +149,14 @@ export default function BasketPage() {
         orderCode += chars.charAt(Math.floor(Math.random() * chars.length));
       }
       const docId = `SO_${orderCode}`;
+
+      let paymentProofUrl = "";
+      if (selectedMethod === "QRIS" && file) {
+        const memberId = member.uid || member.id;
+        const storageRef = ref(storage, `payment_proofs/${memberId}_${docId}_${Date.now()}_${file.name}`);
+        await uploadBytes(storageRef, file);
+        paymentProofUrl = await getDownloadURL(storageRef);
+      }
 
       const orderItems = basket
         .filter(b => (b.dineInQuantity + b.takeAwayQuantity) > 0)
@@ -124,7 +175,7 @@ export default function BasketPage() {
 
       const subTotal = totalPrice;
 
-      await setDoc(doc(db, "SelfOrders", docId), {
+      const orderData = {
         canteenId: "canteen375_plazaUnipdu",
         orderCode,
         namaCustomer: member.fullName,
@@ -132,23 +183,85 @@ export default function BasketPage() {
         customerPhone: member.phoneNumber || "",
         memberId: member.uid || member.id,
         orderItems,
-        status: "Pending",
+        status: "Pending", // Legacy compatibility
+        paymentMethod: selectedMethod,
+        paymentStatus: selectedMethod === "QRIS" ? "PENDING_VERIFICATION" : "UNPAID_CASH",
+        orderStatus: "PENDING",
+        paymentProof: paymentProofUrl,
         subTotal,
         takeAwayFee,
         total: subTotal + takeAwayFee,
         transactionMethod: "SelfOrder",
         waktuPengambilan: "Tidak Memesan",
         waktuPesan: serverTimestamp(),
-      });
+      };
+
+      await setDoc(doc(db, "SelfOrders", docId), orderData);
 
       clearBasket();
-      setOrderSuccess({ orderCode });
+      setOrderSuccess({ orderCode, docId, paymentMethod: selectedMethod });
+      if (selectedMethod === "QRIS") {
+        setPaymentVerificationStatus("waiting");
+      }
+      setShowConfirmationModal(false);
     } catch (err) {
       console.error("Error placing order:", err);
+      setFileError("Terjadi kesalahan saat memproses pesanan. Silakan coba lagi.");
     } finally {
       setSubmitting(false);
     }
   };
+
+  useEffect(() => {
+    if (!orderSuccess || orderSuccess.paymentMethod !== "QRIS") return;
+
+    const docRef = doc(db, "SelfOrders", orderSuccess.docId);
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        
+        // Cashier rejects:
+        // - paymentStatus becomes 'REJECTED' or 'FAILED'
+        // - or orderStatus becomes 'CANCELLED'
+        // - or legacy status becomes 'Declined' or 'Batal' or 'Cancelled'
+        const isRejected = 
+          data.paymentStatus === "REJECTED" || 
+          data.paymentStatus === "FAILED" || 
+          data.orderStatus === "CANCELLED" || 
+          (data.status && (
+            data.status.toLowerCase() === "declined" ||
+            data.status.toLowerCase() === "batal" ||
+            data.status.toLowerCase() === "cancelled"
+          ));
+
+        // Cashier confirms:
+        // - paymentStatus becomes 'PAID' or 'COMPLETED'
+        // - or orderStatus becomes 'CONFIRMED' or 'PREPARING' or 'COMPLETED'
+        // - or legacy status becomes 'Paid'
+        const isPaid = 
+          !isRejected && (
+            data.paymentStatus === "PAID" || 
+            data.paymentStatus === "COMPLETED" || 
+            (data.orderStatus && (
+              data.orderStatus === "CONFIRMED" || 
+              data.orderStatus === "PREPARING" || 
+              data.orderStatus === "COMPLETED"
+            )) ||
+            (data.status && data.status.toLowerCase() === "paid")
+          );
+
+        if (isPaid) {
+          setPaymentVerificationStatus("verified");
+        } else if (isRejected) {
+          setPaymentVerificationStatus("rejected");
+        }
+      }
+    }, (error) => {
+      console.error("Error listening to order updates:", error);
+    });
+
+    return () => unsubscribe();
+  }, [orderSuccess]);
   // -- Edit Logic --
   const activeItemGroups = useMemo(() => {
     if (!editingItem) return [];
@@ -267,23 +380,73 @@ export default function BasketPage() {
 
   // ── Order placed success screen ──
   if (orderSuccess) {
+    const isCash = orderSuccess.paymentMethod === "CASH";
+    
     return (
       <div className="basket-page">
         <Navbar />
         <div className="success-screen">
-          <div className="success-card">
-            <div className="success-icon">✅</div>
-            <h2>Pesanan Masuk!</h2>
-            <p>Kode pesanan kamu:</p>
-            <div className="short-code">{orderSuccess.orderCode}</div>
-            <p className="success-sub">Tunjukkan kode ini ke kasir. Pesananmu segera disiapkan!</p>
-            <button className="btn-back" onClick={() => router.push("/order")}>
-              Pesan Lagi
-            </button>
-            <button className="btn-dashboard" onClick={() => router.push("/dashboard")}>
-              Kembali ke Dashboard
-            </button>
-          </div>
+          {isCash ? (
+            <div className="success-card">
+              <div className="success-icon">✅</div>
+              <h2>Pesanan Masuk!</h2>
+              <p>Kode pesanan kamu:</p>
+              <div className="short-code">{orderSuccess.orderCode}</div>
+              <p className="success-sub">Tunjukkan kode ini ke kasir. Pesananmu segera disiapkan!</p>
+              <button type="button" className="btn-back" onClick={() => router.push("/order")}>
+                Pesan Lagi
+              </button>
+              <button type="button" className="btn-dashboard" onClick={() => router.push("/dashboard")}>
+                Kembali ke Dashboard
+              </button>
+            </div>
+          ) : (
+            <div className="success-card">
+              {paymentVerificationStatus === "waiting" && (
+                <div className="waiting-container">
+                  <div className="pulse-loader-ring">
+                    <div className="loader-inner-dot"></div>
+                  </div>
+                  <h2>Menunggu Verifikasi</h2>
+                  <p className="success-sub">Bukti transfer Anda sedang diperiksa oleh kasir.</p>
+                  <div className="short-code waiting-code">{orderSuccess.orderCode}</div>
+                  <div className="status-badge waiting-badge">⌛ Pending Verification</div>
+                  <p className="waiting-helper">Mohon jangan menutup halaman ini agar verifikasi dapat berjalan otomatis.</p>
+                </div>
+              )}
+
+              {paymentVerificationStatus === "verified" && (
+                <div className="verified-container">
+                  <div className="success-icon pop-in-animation">✅</div>
+                  <h2>Pembayaran Sukses!</h2>
+                  <p className="success-sub">Pembayaran Anda telah terverifikasi oleh kasir.</p>
+                  <div className="short-code verified-code">{orderSuccess.orderCode}</div>
+                  <div className="status-badge verified-badge">✅ Paid & Confirmed</div>
+                  <p className="success-sub" style={{ margin: "0 0 1.5rem" }}>Silakan tunggu, pesanan Anda sedang disiapkan!</p>
+                  <button type="button" className="btn-back" onClick={() => router.push("/order")}>
+                    Pesan Lagi
+                  </button>
+                  <button type="button" className="btn-dashboard" onClick={() => router.push("/dashboard")}>
+                    Kembali ke Dashboard
+                  </button>
+                </div>
+              )}
+
+              {paymentVerificationStatus === "rejected" && (
+                <div className="rejected-container">
+                  <div className="error-icon pop-in-animation">❌</div>
+                  <h2>Verifikasi Gagal</h2>
+                  <p className="success-sub">Kasir menolak atau tidak dapat memverifikasi bukti pembayaran Anda.</p>
+                  <div className="short-code rejected-code">{orderSuccess.orderCode}</div>
+                  <div className="status-badge rejected-badge">❌ Rejected</div>
+                  <p className="rejected-helper">Silakan tunjukkan kode pesanan di atas ke kasir untuk verifikasi manual.</p>
+                  <button type="button" className="btn-dashboard" onClick={() => router.push("/dashboard")}>
+                    Kembali ke Dashboard
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <SuccessStyles />
       </div>
@@ -1023,6 +1186,297 @@ export default function BasketPage() {
           cursor: pointer;
           box-shadow: 0 4px 12px rgba(197,23,32,0.2);
         }
+
+        /* Confirmation Modal Styles */
+        .modal-overlay {
+          position: fixed;
+          top: 0; left: 0; right: 0; bottom: 0;
+          background: rgba(0,0,0,0.6);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 2500;
+          padding: 1rem;
+          backdrop-filter: blur(8px);
+        }
+        .modal-content {
+          background: white;
+          width: 100%;
+          max-width: 480px;
+          border-radius: 28px;
+          padding: 2rem;
+          box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+          animation: modalAppear 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+          position: relative;
+          display: flex;
+          flex-direction: column;
+          max-height: 90vh;
+          overflow-y: auto;
+          scrollbar-width: none;
+        }
+        .modal-content::-webkit-scrollbar { display: none; }
+        
+        .modal-close-btn {
+          position: absolute;
+          top: 1.25rem;
+          right: 1.25rem;
+          background: #faf7f2;
+          border: none;
+          width: 32px;
+          height: 32px;
+          border-radius: 50%;
+          font-size: 0.9rem;
+          font-weight: bold;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #2d241d;
+          transition: all 0.2s;
+        }
+        .modal-close-btn:hover { background: #efeae4; transform: scale(1.05); }
+
+        .modal-title {
+          font-size: 1.4rem;
+          font-weight: 800;
+          color: #2d241d;
+          margin: 0 0 0.25rem;
+          text-align: center;
+        }
+        .modal-subtitle {
+          font-size: 0.85rem;
+          color: #8d6e63;
+          margin: 0 0 1.5rem;
+          text-align: center;
+          line-height: 1.4;
+        }
+
+        .tab-container {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 0.5rem;
+          background: #faf7f2;
+          padding: 0.35rem;
+          border-radius: 16px;
+          margin-bottom: 1.5rem;
+          border: 1px solid #ece8e3;
+        }
+        .tab-btn {
+          padding: 0.75rem;
+          border-radius: 12px;
+          border: none;
+          background: transparent;
+          font-size: 0.9rem;
+          font-weight: 700;
+          color: #8d6e63;
+          cursor: pointer;
+          transition: all 0.2s;
+          font-family: inherit;
+        }
+        .tab-btn.active {
+          background: white;
+          color: #C51720;
+          box-shadow: 0 4px 10px rgba(0,0,0,0.06);
+        }
+
+        .qris-payment-section {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 1.25rem;
+        }
+        .qris-image-container {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 0.75rem;
+          width: 100%;
+        }
+        .qris-qr-code {
+          width: 180px;
+          height: 180px;
+          object-fit: contain;
+          border: 1.5px solid #ece8e3;
+          border-radius: 16px;
+          padding: 0.5rem;
+          background: white;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.03);
+        }
+        .btn-download-qr {
+          font-size: 0.8rem;
+          font-weight: 700;
+          color: #C51720;
+          background: #fef3f3;
+          border: 1.5px solid #fca5a5;
+          padding: 0.5rem 1rem;
+          border-radius: 50px;
+          cursor: pointer;
+          text-decoration: none;
+          transition: all 0.2s;
+          display: inline-flex;
+          align-items: center;
+          gap: 0.35rem;
+        }
+        .btn-download-qr:hover { background: #fee2e2; transform: translateY(-1px); }
+
+        .qris-helper-text {
+          font-size: 0.78rem;
+          color: #5d4037;
+          background: #faf7f2;
+          padding: 0.75rem 1rem;
+          border-radius: 12px;
+          border-left: 4px solid #C51720;
+          line-height: 1.5;
+          margin: 0;
+          text-align: left;
+        }
+
+        .upload-section {
+          width: 100%;
+        }
+        .upload-box {
+          display: block;
+          border: 2px dashed #d1c7bd;
+          border-radius: 16px;
+          padding: 1.25rem;
+          text-align: center;
+          background: #faf7f2;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .upload-box:hover {
+          border-color: #C51720;
+          background: #fdfaf7;
+        }
+        .upload-placeholder {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 0.25rem;
+        }
+        .upload-icon { font-size: 1.75rem; margin-bottom: 0.25rem; }
+        .upload-text { font-size: 0.85rem; font-weight: 700; color: #2d241d; }
+        .upload-subtext { font-size: 0.72rem; color: #8d6e63; }
+
+        .file-info-box {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+          padding: 0.5rem;
+          background: white;
+          border: 1.5px solid #ece8e3;
+          border-radius: 12px;
+          text-align: left;
+          width: 100%;
+          box-sizing: border-box;
+        }
+        .file-icon { font-size: 1.5rem; }
+        .file-details {
+          display: flex;
+          flex-direction: column;
+          flex: 1;
+          min-width: 0;
+        }
+        .file-name {
+          font-size: 0.82rem;
+          font-weight: 700;
+          color: #2d241d;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .file-size {
+          font-size: 0.7rem;
+          color: #8d6e63;
+        }
+        .btn-remove-file {
+          background: #fef2f2;
+          border: none;
+          color: #C51720;
+          width: 24px;
+          height: 24px;
+          border-radius: 50%;
+          font-size: 0.75rem;
+          font-weight: bold;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: all 0.2s;
+        }
+        .btn-remove-file:hover { background: #fee2e2; }
+
+        .error-message {
+          font-size: 0.78rem;
+          color: #dc2626;
+          margin: 0.5rem 0 0;
+          text-align: center;
+          font-weight: 600;
+        }
+
+        .cash-payment-section {
+          padding: 1.5rem 0;
+          display: flex;
+          justify-content: center;
+          width: 100%;
+        }
+        .cash-info-box {
+          text-align: center;
+          background: #faf7f2;
+          border: 1.5px solid #ece8e3;
+          border-radius: 20px;
+          padding: 2rem 1.5rem;
+          max-width: 320px;
+          width: 100%;
+        }
+        .cash-icon { font-size: 3rem; display: block; margin-bottom: 0.75rem; }
+        .cash-info-box h3 { font-size: 1.1rem; font-weight: 800; color: #2d241d; margin: 0 0 0.5rem; }
+        .cash-info-box p { font-size: 0.85rem; color: #5d4037; line-height: 1.5; margin: 0; }
+
+        .modal-footer {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 1rem;
+          margin-top: 1.75rem;
+          border-top: 1.5px solid #faf7f2;
+          padding-top: 1.25rem;
+          width: 100%;
+        }
+        .btn-cancel {
+          padding: 0.9rem;
+          border-radius: 16px;
+          border: 1.5px solid #ece8e3;
+          background: white;
+          color: #2d241d;
+          font-weight: 700;
+          font-family: inherit;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .btn-cancel:hover:not(:disabled) { background: #faf7f2; }
+        .btn-cancel:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        .btn-confirm {
+          padding: 0.9rem;
+          border-radius: 16px;
+          border: none;
+          background: #C51720;
+          color: white;
+          font-weight: 700;
+          font-family: inherit;
+          cursor: pointer;
+          box-shadow: 0 4px 12px rgba(197,23,32,0.2);
+          transition: all 0.2s;
+        }
+        .btn-confirm:hover:not(:disabled) { background: #8b0000; }
+        .btn-confirm:disabled { background: #e5e7eb; color: #9ca3af; cursor: not-allowed; box-shadow: none; }
+        
+        .spinner-loader {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.5rem;
+        }
       `}</style>
 
       {/* ── CUSTOMIZATION DRAWER ── */}
@@ -1140,6 +1594,125 @@ export default function BasketPage() {
         </div>
       )}
 
+      {/* ── CHECKOUT CONFIRMATION MODAL ── */}
+      {showConfirmationModal && (
+        <div className="modal-overlay" onClick={() => setShowConfirmationModal(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <button type="button" className="modal-close-btn" onClick={() => setShowConfirmationModal(false)}>✕</button>
+            
+            <h2 className="modal-title">Konfirmasi Pembayaran</h2>
+            <p className="modal-subtitle">Pilih metode pembayaran untuk menyelesaikan pesanan Anda</p>
+            
+            <div className="tab-container">
+              <button 
+                type="button"
+                className={`tab-btn ${selectedMethod === 'QRIS' ? 'active' : ''}`}
+                onClick={() => { setSelectedMethod('QRIS'); setFileError(''); }}
+              >
+                📱 QRIS (BCA)
+              </button>
+              <button 
+                type="button"
+                className={`tab-btn ${selectedMethod === 'CASH' ? 'active' : ''}`}
+                onClick={() => { setSelectedMethod('CASH'); setFileError(''); }}
+              >
+                💵 Tunai di Kasir
+              </button>
+            </div>
+
+            {selectedMethod === 'QRIS' ? (
+              <div className="qris-payment-section">
+                <div className="qris-image-container">
+                  <img 
+                    src="/QRMerchantBCA-CroppedV2.png" 
+                    alt="BCA Merchant QRIS" 
+                    className="qris-qr-code" 
+                  />
+                  <a 
+                    href="/QRMerchantBCA-CroppedV2.png" 
+                    download="QRMerchantBCA-CroppedV2.png" 
+                    className="btn-download-qr"
+                  >
+                    📥 Unduh QR Code
+                  </a>
+                </div>
+                
+                <p className="qris-helper-text">
+                  Using a single phone? Download the QR code, upload it into your e-wallet/banking app to pay, then take a screenshot of your receipt.
+                </p>
+
+                <div className="upload-section">
+                  <label className="upload-box">
+                    <input 
+                      type="file" 
+                      onChange={handleFileChange} 
+                      accept=".jpg,.jpeg,.png,.pdf" 
+                      style={{ display: 'none' }} 
+                    />
+                    {file ? (
+                      <div className="file-info-box">
+                        <span className="file-icon">{file.type === 'application/pdf' ? '📄' : '🖼️'}</span>
+                        <div className="file-details">
+                          <span className="file-name">{file.name}</span>
+                          <span className="file-size">{(file.size / (1024 * 1024)).toFixed(2)} MB</span>
+                        </div>
+                        <button 
+                          type="button" 
+                          className="btn-remove-file" 
+                          onClick={(e) => { e.stopPropagation(); e.preventDefault(); setFile(null); }}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="upload-placeholder">
+                        <span className="upload-icon">📤</span>
+                        <span className="upload-text">Unggah Bukti Pembayaran</span>
+                        <span className="upload-subtext">Mendukung JPG, JPEG, PNG, PDF (Maks 5MB)</span>
+                      </div>
+                    )}
+                  </label>
+                  {fileError && <p className="error-message">{fileError}</p>}
+                </div>
+              </div>
+            ) : (
+              <div className="cash-payment-section">
+                <div className="cash-info-box">
+                  <span className="cash-icon">🏪</span>
+                  <h3>Pembayaran Tunai di Kasir</h3>
+                  <p>
+                    Silakan selesaikan pesanan terlebih dahulu, lalu lakukan pembayaran tunai di kasir dengan menyebutkan <strong>kode pesanan</strong> Anda.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            <div className="modal-footer">
+              <button 
+                type="button"
+                className="btn-cancel" 
+                onClick={() => setShowConfirmationModal(false)}
+                disabled={submitting}
+              >
+                Batal
+              </button>
+              <button 
+                type="button"
+                className="btn-confirm" 
+                onClick={confirmAndPlaceOrder}
+                disabled={submitting || (selectedMethod === 'QRIS' && !file)}
+              >
+                {submitting ? (
+                  <span className="spinner-loader">Memproses...</span>
+                ) : (
+                  selectedMethod === 'QRIS' ? 'Konfirmasi & Kirim Bukti' : 'Pesan & Bayar Nanti'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
@@ -1214,7 +1787,7 @@ function SuccessStyles() {
         background: #C51720;
         color: white;
         border: none;
-        box-shadow: 0 4px 12px rgba(197,23,32,0.3);
+        box-shadow: 0 4px 12px rgba(197, 23, 32, 0.3);
       }
       .btn-back:hover { background: #8b0000; }
       .btn-dashboard {
@@ -1223,6 +1796,91 @@ function SuccessStyles() {
         border: 2px solid #C51720;
       }
       .btn-dashboard:hover { background: #fef3f3; }
+
+      /* Live Checking Custom Styles */
+      .status-badge {
+        font-size: 0.85rem;
+        font-weight: 700;
+        padding: 0.35rem 0.75rem;
+        border-radius: 50px;
+        display: inline-block;
+        margin-bottom: 1.25rem;
+      }
+      .waiting-badge {
+        background: #fffbeb;
+        color: #d97706;
+        border: 1.5px solid #fef3c7;
+      }
+      .verified-badge {
+        background: #f0fdf4;
+        color: #16a34a;
+        border: 1.5px solid #bbf7d0;
+      }
+      .rejected-badge {
+        background: #fef2f2;
+        color: #dc2626;
+        border: 1.5px solid #fecaca;
+      }
+      
+      .waiting-helper {
+        font-size: 0.8rem;
+        color: #8d6e63;
+        line-height: 1.4;
+        margin-top: 0.5rem;
+      }
+      .rejected-helper {
+        font-size: 0.8rem;
+        color: #b91c1c;
+        line-height: 1.4;
+        margin-top: 0.5rem;
+        margin-bottom: 1rem;
+      }
+
+      .pulse-loader-ring {
+        width: 64px;
+        height: 64px;
+        border-radius: 50%;
+        background: #fef3f3;
+        border: 4px solid #fca5a5;
+        position: relative;
+        margin: 0 auto 1.5rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        animation: pulseAnimation 1.8s infinite ease-in-out;
+      }
+      .loader-inner-dot {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #C51720;
+      }
+      @keyframes pulseAnimation {
+        0% {
+          transform: scale(0.95);
+          box-shadow: 0 0 0 0 rgba(197, 23, 32, 0.4);
+        }
+        70% {
+          transform: scale(1);
+          box-shadow: 0 0 0 16px rgba(197, 23, 32, 0);
+        }
+        100% {
+          transform: scale(0.95);
+          box-shadow: 0 0 0 0 rgba(197, 23, 32, 0);
+        }
+      }
+
+      .pop-in-animation {
+        animation: popInSuccess 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+      }
+      .error-icon {
+        font-size: 4rem;
+        margin-bottom: 1rem;
+      }
+      @keyframes popInSuccess {
+        0% { transform: scale(0.5); opacity: 0; }
+        100% { transform: scale(1); opacity: 1; }
+      }
     `}</style>
   );
 }

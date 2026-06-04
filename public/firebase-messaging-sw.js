@@ -6,7 +6,7 @@ importScripts("https://www.gstatic.com/firebasejs/12.13.0/firebase-app-compat.js
 importScripts("https://www.gstatic.com/firebasejs/12.13.0/firebase-messaging-compat.js");
 
 firebase.initializeApp({
-  apiKey: "AIzaSyCZ1oJuagSPQ_9VWiFONeArwxtUsgLGhCA",
+  apiKey: "AIzaSyD6kQeCJTtaapJ_LxWshG_G8DjErSugpXU",
   authDomain: "point-of-sales-app-25e2b.firebaseapp.com",
   projectId: "point-of-sales-app-25e2b",
   storageBucket: "point-of-sales-app-25e2b.appspot.com",

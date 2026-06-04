@@ -5,7 +5,7 @@ import { getAuth } from "firebase/auth";
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCZ1oJuagSPQ_9VWiFONeArwxtUsgLGhCA",
+  apiKey: "AIzaSyD6kQeCJTtaapJ_LxWshG_G8DjErSugpXU",
   authDomain: "point-of-sales-app-25e2b.firebaseapp.com",
   databaseURL: "https://point-of-sales-app-25e2b-default-rtdb.asia-southeast1.firebasedatabase.app",
   projectId: "point-of-sales-app-25e2b",
