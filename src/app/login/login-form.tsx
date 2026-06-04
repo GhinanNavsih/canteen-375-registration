@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Image from "next/image";
 import { useSearchParams, useRouter } from "next/navigation";
-import { signInWithEmailAndPassword, getAuth } from "firebase/auth";
+import { signInWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { userIsAdminFromToken } from "@/lib/adminAuth";
 
@@ -12,20 +12,42 @@ export default function LoginForm() {
     const redirect = searchParams.get("redirect") || "/dashboard";
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const [isForgotPasswordMode, setIsForgotPasswordMode] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
+    const [successMessage, setSuccessMessage] = useState("");
     const router = useRouter();
 
-    const handleLogin = async (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
         setError("");
+        setSuccessMessage("");
+
+        if (isForgotPasswordMode) {
+            try {
+                console.log("[LOGIN] Sending password reset email to:", email);
+                await sendPasswordResetEmail(auth, email);
+                setSuccessMessage("Link reset password telah dikirim ke email Anda. Silakan periksa inbox atau spam.");
+            } catch (err: any) {
+                console.error(err);
+                const code = err.code as string;
+                if (code === "auth/user-not-found") {
+                    setError("Email tidak terdaftar.");
+                } else if (code === "auth/invalid-email") {
+                    setError("Format email tidak valid.");
+                } else {
+                    setError("Gagal mengirim link reset password. Silakan coba lagi.");
+                }
+            } finally {
+                setLoading(false);
+            }
+            return;
+        }
 
         try {
-            console.log("[LOGIN] Starting login for email:", email);
-
-            // Firebase Auth handles credential verification — no manual Firestore read needed.
+            console.log("[LOGIN] Starting password login for email:", email);
             const userCred = await signInWithEmailAndPassword(auth, email, password);
             console.log("[LOGIN] Sign-in successful. User UID:", userCred.user.uid);
             console.log("[LOGIN] User email:", userCred.user.email);
@@ -79,11 +101,11 @@ export default function LoginForm() {
                     />
                     <div className="logo-text">
                         <h1>Canteen 375</h1>
-                        <p>Member Login</p>
+                        <p>{isForgotPasswordMode ? "Reset Password" : "Member Login"}</p>
                     </div>
                 </div>
 
-                <form onSubmit={handleLogin}>
+                <form onSubmit={handleSubmit}>
                     <div className="form-group">
                         <label htmlFor="email">Alamat Email</label>
                         <input
@@ -97,37 +119,68 @@ export default function LoginForm() {
                         />
                     </div>
 
-                    <div className="form-group" style={{ position: "relative" }}>
-                        <label htmlFor="password">Password</label>
-                        <input
-                            type={showPassword ? "text" : "password"}
-                            id="password"
-                            placeholder="Masukkan password"
-                            required
-                            autoComplete="current-password"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            style={{ paddingRight: "3rem" }}
-                        />
+                    {!isForgotPasswordMode && (
+                        <div className="form-group" style={{ position: "relative" }}>
+                            <label htmlFor="password">Password</label>
+                            <input
+                                type={showPassword ? "text" : "password"}
+                                id="password"
+                                placeholder="Masukkan password"
+                                required
+                                autoComplete="current-password"
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                style={{ paddingRight: "3rem" }}
+                            />
+                            <button
+                                type="button"
+                                onClick={() => setShowPassword(!showPassword)}
+                                style={{
+                                    position: "absolute",
+                                    right: "1rem",
+                                    top: "calc(1.6rem + 22px)",
+                                    background: "none",
+                                    border: "none",
+                                    cursor: "pointer",
+                                    fontSize: "1.2rem",
+                                    lineHeight: 1,
+                                    color: "#8d6e63"
+                                }}
+                                aria-label={showPassword ? "Sembunyikan password" : "Tampilkan password"}
+                            >
+                                {showPassword ? "🙈" : "👁️"}
+                            </button>
+                        </div>
+                    )}
+
+                    <div style={{ textAlign: "right", marginTop: "-0.5rem", marginBottom: "1.5rem" }}>
                         <button
                             type="button"
-                            onClick={() => setShowPassword(!showPassword)}
+                            onClick={() => {
+                                setIsForgotPasswordMode(!isForgotPasswordMode);
+                                setError("");
+                                setSuccessMessage("");
+                            }}
                             style={{
-                                position: "absolute",
-                                right: "1rem",
-                                top: "calc(1.6rem + 22px)",
                                 background: "none",
                                 border: "none",
+                                color: "var(--primary)",
+                                fontSize: "0.85rem",
                                 cursor: "pointer",
-                                fontSize: "1.2rem",
-                                lineHeight: 1,
-                                color: "#8d6e63"
+                                textDecoration: "underline",
+                                fontWeight: "500",
+                                padding: 0
                             }}
-                            aria-label={showPassword ? "Sembunyikan password" : "Tampilkan password"}
                         >
-                            {showPassword ? "🙈" : "👁️"}
+                            {isForgotPasswordMode ? "Kembali ke Login" : "Lupa Password?"}
                         </button>
                     </div>
+
+                    {successMessage && (
+                        <p style={{ color: "green", marginBottom: "1rem", textAlign: "center", fontSize: "0.9rem" }}>
+                            {successMessage}
+                        </p>
+                    )}
 
                     {error && (
                         <p style={{ color: "var(--error)", marginBottom: "1rem", textAlign: "center", fontSize: "0.9rem" }}>
@@ -136,7 +189,7 @@ export default function LoginForm() {
                     )}
 
                     <button type="submit" className="btn-submit" disabled={loading}>
-                        {loading ? "Masuk..." : "Login"}
+                        {loading ? "Memproses..." : isForgotPasswordMode ? "Kirim Link Reset" : "Login"}
                     </button>
 
                     <p style={{ textAlign: "center", marginTop: "1.5rem", fontSize: "0.9rem", color: "var(--primary)" }}>

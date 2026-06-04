@@ -328,3 +328,5 @@ async function onTransactionStatusCreatedLogic(event: any) {
 export const onTransactionStatusCreated = onDocumentCreated({ document: "{path=**}/Status/{statusId}", region: "us-central1" }, onTransactionStatusCreatedLogic);
 export const onTransactionStatusCreatedTesting = onDocumentCreated({ document: "zTesting_Status/{statusId}", region: "us-central1" }, onTransactionStatusCreatedLogic);
 export const onSelfOrderCreatedTesting = onDocumentCreated({ document: "zTesting_SelfOrders/{statusId}", region: "us-central1" }, onTransactionStatusCreatedLogic);
+
+
