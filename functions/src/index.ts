@@ -1,4 +1,5 @@
 import * as admin from "firebase-admin";
+import { Timestamp, FieldValue } from "firebase-admin/firestore";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
@@ -123,9 +124,21 @@ export const onMemberCreatedTesting = onDocumentCreated({ document: "zTesting_Me
 export const distributeMonthlyRewards = onSchedule(
     { schedule: "0 0 1 * *", timeZone: "Asia/Jakarta", region: "us-central1" },
     async () => {
-        const now = new Date();
-        const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        const prevMonthStr = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, "0")}`;
+        const nowUTC = new Date();
+        const wibOffset = 7 * 60 * 60 * 1000;
+        const nowWIB = new Date(nowUTC.getTime() + wibOffset);
+
+        let year = nowWIB.getUTCFullYear();
+        let month = nowWIB.getUTCMonth(); // 0-indexed (0 = Jan, 11 = Dec)
+
+        // Previous month calculation
+        month--;
+        if (month < 0) {
+            month = 11;
+            year--;
+        }
+        const prevMonthStr = `${year}-${String(month + 1).padStart(2, "0")}`;
+
         try {
             const [compDoc, membersSnap] = await Promise.all([
                 db.collection("competitionRecords").doc(prevMonthStr).get(),
@@ -139,26 +152,67 @@ export const distributeMonthlyRewards = onSchedule(
             for (const [memberId, stats] of Object.entries(records)) {
                 const memberData = memberMap.get(memberId);
                 if (!memberData) continue;
-                const category = memberData.category || "Umum";
+                let category = memberData.category || "Umum";
+                if (category === "Guru/Dosen") {
+                    category = "Guru/Dosen/Staff";
+                }
                 const points = (stats as any).customerPoints || 0;
+                const numberOfTransaction = (stats as any).numberOfTransaction || 0;
+                const amountSpent = (stats as any).amountSpent || 0;
                 if (points > 0) {
                     if (!categoriesMap.has(category)) categoriesMap.set(category, []);
-                    categoriesMap.get(category)!.push({ id: memberId, name: memberData.fullName || "Member", points });
+                    categoriesMap.get(category)!.push({
+                        id: memberId,
+                        name: memberData.fullName || memberData.name || "Member",
+                        points,
+                        numberOfTransaction,
+                        amountSpent
+                    });
                 }
             }
-            const prizes = [25000, 15000, 10000];
+
+            const currentYear = nowWIB.getUTCFullYear();
+            const currentMonth = nowWIB.getUTCMonth();
+            const activeDateWIB = new Date(Date.UTC(currentYear, currentMonth, 1, 0, 0, 0) - wibOffset);
+            const lastDayOfCurrentMonth = new Date(Date.UTC(currentYear, currentMonth + 1, 0)).getUTCDate();
+            const expireDateWIB = new Date(Date.UTC(currentYear, currentMonth, lastDayOfCurrentMonth, 16, 59, 59));
+
+            const activeDate = Timestamp.fromDate(activeDateWIB);
+            const expireDate = Timestamp.fromDate(expireDateWIB);
+
+            const prizes = [50000, 25000, 15000];
             const batch = db.batch();
             for (const [category, participants] of categoriesMap.entries()) {
-                participants.sort((a, b) => b.points - a.points);
+                participants.sort((a, b) => {
+                    if (b.points !== a.points) return b.points - a.points;
+                    if (b.numberOfTransaction !== a.numberOfTransaction)
+                        return b.numberOfTransaction - a.numberOfTransaction;
+                    return b.amountSpent - a.amountSpent;
+                });
                 participants.slice(0, 3).forEach((winner, index) => {
                     const newVoucherRef = db.collection("vouchers").doc();
+                    
+                    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+                    let shortVoucherId = "";
+                    for (let i = 0; i < 4; i++) {
+                        shortVoucherId += chars.charAt(Math.floor(Math.random() * chars.length));
+                    }
+
                     batch.set(newVoucherRef, {
                         userId: winner.id,
+                        nama: winner.name,
+                        Nama: winner.name,
+                        userName: winner.name,
                         type: "competitionReward",
                         value: prizes[index],
                         status: "READY_TO_CLAIM",
-                        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                        transactionRequirement: 10000,
+                        activeDate: activeDate,
+                        expireDate: expireDate,
+                        createdAt: FieldValue.serverTimestamp(),
+                        lastUpdatedAt: FieldValue.serverTimestamp(),
                         voucherName: `Juara ${index + 1} ${category} - ${prevMonthStr}`,
+                        voucherId: shortVoucherId,
                     });
                 });
             }
