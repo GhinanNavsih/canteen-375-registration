@@ -329,4 +329,61 @@ export const onTransactionStatusCreated = onDocumentCreated({ document: "{path=*
 export const onTransactionStatusCreatedTesting = onDocumentCreated({ document: "zTesting_Status/{statusId}", region: "us-central1" }, onTransactionStatusCreatedLogic);
 export const onSelfOrderCreatedTesting = onDocumentCreated({ document: "zTesting_SelfOrders/{statusId}", region: "us-central1" }, onTransactionStatusCreatedLogic);
 
+// SHARED LOGIC for onTransactionStatusUpdated
+async function onTransactionStatusUpdatedLogic(event: any) {
+    const change = event.data;
+    if (!change) return;
+    const beforeData = change.before.data();
+    const afterData = change.after.data();
+    if (!afterData) return;
+
+    if (!afterData.isMember || !afterData.memberId) return;
+
+    const memberId = afterData.memberId;
+    const transactionId = event.params.statusId || event.params.orderId;
+
+    const total = afterData.total || 0;
+    const subTotal = afterData.subTotal || 0;
+    const takeAwayFee = afterData.takeAwayFee || 0;
+    const pointsAdded = Math.floor(total / 10000); 
+
+    const colName = getCol("pointTransactions", event.document);
+    const querySnapshot = await db.collection(colName)
+        .where("memberId", "==", memberId)
+        .where("transactionId", "==", transactionId)
+        .limit(1)
+        .get();
+
+    if (!querySnapshot.empty) {
+        const docRef = querySnapshot.docs[0].ref;
+        await docRef.update({
+            total: total,
+            subTotal: subTotal,
+            takeAwayFee: takeAwayFee,
+            pointsAdded: pointsAdded,
+            orderItems: afterData.orderItems || [],
+            paymentMethod: afterData.paymentMethod || "Pembayaran",
+            timestamp: afterData.waktuPesan || beforeData?.waktuPesan || admin.firestore.FieldValue.serverTimestamp(),
+        });
+    } else {
+        await db.collection(colName).add({
+            memberId: memberId,
+            transactionId: transactionId,
+            total: total,
+            subTotal: subTotal,
+            takeAwayFee: takeAwayFee,
+            pointsAdded: pointsAdded,
+            orderItems: afterData.orderItems || [],
+            paymentMethod: afterData.paymentMethod || "Pembayaran",
+            timestamp: afterData.waktuPesan || admin.firestore.FieldValue.serverTimestamp(),
+            sourcePath: event.document,
+        });
+    }
+}
+
+export const onTransactionStatusUpdated = onDocumentUpdated({ document: "{path=**}/Status/{statusId}", region: "us-central1" }, onTransactionStatusUpdatedLogic);
+export const onTransactionStatusUpdatedTesting = onDocumentUpdated({ document: "zTesting_Status/{statusId}", region: "us-central1" }, onTransactionStatusUpdatedLogic);
+export const onSelfOrderUpdatedTesting = onDocumentUpdated({ document: "zTesting_SelfOrders/{statusId}", region: "us-central1" }, onTransactionStatusUpdatedLogic);
+
+
 

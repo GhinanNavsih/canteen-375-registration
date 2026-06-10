@@ -20,6 +20,7 @@ interface OrderItem {
   takeAwayQuantity: number;
   harga: number;
   selectedOptions?: SelectedOption[];
+  orderedAt?: number;
 }
 
 interface TransactionHistory {
@@ -152,79 +153,121 @@ export default function HistoryPage() {
                       </div>
                     </div>
                     
-                    {isExpanded && (
-                      <div className="history-card-body animate-slide-down">
-                        <div className="receipt-divider" />
-                        <h4 className="receipt-title">Detail Pesanan</h4>
-                        <div className="receipt-items">
-                          {tx.orderItems?.map((item, idx) => {
-                            const qty = (item.dineInQuantity || 0) + (item.takeAwayQuantity || 0);
-                            let itemTotal = item.harga;
-                            if (item.selectedOptions) {
-                              item.selectedOptions.forEach(opt => {
-                                itemTotal += opt.priceAdjustment || 0;
-                              });
-                            }
-                            
-                            return (
-                              <div key={idx} className="receipt-item-row">
-                                <div className="r-item-main">
-                                  <span className="r-item-qty">{qty}x</span>
-                                  <div className="r-item-details">
-                                    <div className="r-item-name-row">
-                                      <span className="r-item-name">{item.namaPesanan}</span>
-                                      <span className="r-item-type">
-                                        {item.dineInQuantity > 0 && item.takeAwayQuantity > 0 ? (
-                                          ` (${item.dineInQuantity} Dine-in, ${item.takeAwayQuantity} Take-away)`
-                                        ) : item.dineInQuantity > 0 ? (
-                                          " (Dine-in)"
-                                        ) : (
-                                          " (Take-away)"
-                                        )}
-                                      </span>
+                    {isExpanded && (() => {
+                      const sortedItems = [...(tx.orderItems || [])].sort((a, b) => (a.orderedAt || 0) - (b.orderedAt || 0));
+                      const uniqueRounds = Array.from(new Set(sortedItems.map(item => item.orderedAt || 0).filter(t => t > 0)));
+                      const hasMultipleRounds = uniqueRounds.length > 1;
+
+                      const groups: { orderedAt: number; items: OrderItem[] }[] = [];
+                      if (hasMultipleRounds) {
+                        sortedItems.forEach(item => {
+                          const ts = item.orderedAt || 0;
+                          let group = groups.find(g => g.orderedAt === ts);
+                          if (!group) {
+                            group = { orderedAt: ts, items: [] };
+                            groups.push(group);
+                          }
+                          group.items.push(item);
+                        });
+                      } else {
+                        groups.push({ orderedAt: 0, items: sortedItems });
+                      }
+
+                      return (
+                        <div className="history-card-body animate-slide-down">
+                          <div className="receipt-divider" />
+                          <h4 className="receipt-title">Detail Pesanan</h4>
+                          <div className="receipt-items">
+                            {groups.map((group, gIdx) => {
+                              const showHeader = hasMultipleRounds && group.orderedAt > 0;
+                              const timeStr = showHeader
+                                ? new Date(group.orderedAt).toLocaleTimeString("id-ID", {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })
+                                : "";
+                              
+                              return (
+                                <div key={gIdx} className="receipt-group">
+                                  {showHeader && (
+                                    <div className="receipt-round-header">
+                                      <span>🕒 Pesanan #{gIdx + 1} ({timeStr})</span>
                                     </div>
-                                    {item.selectedOptions && item.selectedOptions.length > 0 && (
-                                      <div className="r-item-options">
-                                        {item.selectedOptions.map((opt, oIdx) => (
-                                          <div key={oIdx} className="r-option-row">
-                                            <span className="r-option-bullet">•</span>
-                                            <span className="r-option-name">{opt.optionName}</span>
-                                            {opt.priceAdjustment && opt.priceAdjustment > 0 ? (
-                                              <span className="r-option-price">(+{formatPrice(opt.priceAdjustment)})</span>
-                                            ) : null}
+                                  )}
+                                  <div className="receipt-group-items">
+                                    {group.items.map((item, idx) => {
+                                      const qty = (item.dineInQuantity || 0) + (item.takeAwayQuantity || 0);
+                                      let itemTotal = item.harga;
+                                      if (item.selectedOptions) {
+                                        item.selectedOptions.forEach(opt => {
+                                          itemTotal += opt.priceAdjustment || 0;
+                                        });
+                                      }
+                                      
+                                      return (
+                                        <div key={idx} className="receipt-item-row">
+                                          <div className="r-item-main">
+                                            <span className="r-item-qty">{qty}x</span>
+                                            <div className="r-item-details">
+                                              <div className="r-item-name-row">
+                                                <span className="r-item-name">{item.namaPesanan}</span>
+                                                <span className="r-item-type">
+                                                  {item.dineInQuantity > 0 && item.takeAwayQuantity > 0 ? (
+                                                    ` (${item.dineInQuantity} Dine-in, ${item.takeAwayQuantity} Take-away)`
+                                                  ) : item.dineInQuantity > 0 ? (
+                                                    " (Dine-in)"
+                                                  ) : (
+                                                    " (Take-away)"
+                                                  )}
+                                                </span>
+                                              </div>
+                                              {item.selectedOptions && item.selectedOptions.length > 0 && (
+                                                <div className="r-item-options">
+                                                  {item.selectedOptions.map((opt, oIdx) => (
+                                                    <div key={oIdx} className="r-option-row">
+                                                      <span className="r-option-bullet">•</span>
+                                                      <span className="r-option-name">{opt.optionName}</span>
+                                                      {opt.priceAdjustment && opt.priceAdjustment > 0 ? (
+                                                        <span className="r-option-price">(+{formatPrice(opt.priceAdjustment)})</span>
+                                                      ) : null}
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              )}
+                                            </div>
                                           </div>
-                                        ))}
-                                      </div>
-                                    )}
+                                          <span className="r-item-price">{formatPrice(itemTotal * qty)}</span>
+                                        </div>
+                                      );
+                                    })}
                                   </div>
                                 </div>
-                                <span className="r-item-price">{formatPrice(itemTotal * qty)}</span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                        <div className="receipt-divider" />
-                        <div className="receipt-footer">
-                          <div className="r-footer-row">
-                            <span>Subtotal</span>
-                            <span>{formatPrice((tx.subTotal ?? (tx.total ?? tx.totalAmount)) || 0)}</span>
+                              );
+                            })}
                           </div>
-                          {(tx.takeAwayFee ?? 0) > 0 && (
+                          <div className="receipt-divider" />
+                          <div className="receipt-footer">
                             <div className="r-footer-row">
-                              <span>Biaya Take-away</span>
-                              <span>{formatPrice(tx.takeAwayFee || 0)}</span>
+                              <span>Subtotal</span>
+                              <span>{formatPrice((tx.subTotal ?? (tx.total ?? tx.totalAmount)) || 0)}</span>
                             </div>
-                          )}
-                          <div className="r-footer-row total">
-                            <span>Total</span>
-                            <span>{formatPrice((tx.total ?? tx.totalAmount) || 0)}</span>
-                          </div>
-                          <div className="r-points-earned">
-                            ⭐ Anda mendapatkan <strong>{tx.pointsAdded} Poin</strong> dari transaksi ini!
+                            {(tx.takeAwayFee ?? 0) > 0 && (
+                              <div className="r-footer-row">
+                                <span>Biaya Take-away</span>
+                                <span>{formatPrice(tx.takeAwayFee || 0)}</span>
+                              </div>
+                            )}
+                            <div className="r-footer-row total">
+                              <span>Total</span>
+                              <span>{formatPrice((tx.total ?? tx.totalAmount) || 0)}</span>
+                            </div>
+                            <div className="r-points-earned">
+                              ⭐ Anda mendapatkan <strong>{tx.pointsAdded} Poin</strong> dari transaksi ini!
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
                   </div>
                 );
               })}
@@ -427,7 +470,33 @@ export default function HistoryPage() {
         .receipt-items {
           display: flex;
           flex-direction: column;
+          gap: 1rem;
+        }
+        .receipt-group {
+          display: flex;
+          flex-direction: column;
+        }
+        .receipt-group-items {
+          display: flex;
+          flex-direction: column;
           gap: 0.85rem;
+        }
+        .receipt-round-header {
+          font-size: 0.8rem;
+          color: #8d6e63;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          margin-top: 1rem;
+          margin-bottom: 0.6rem;
+          display: flex;
+          align-items: center;
+          gap: 0.35rem;
+          border-bottom: 1px dashed #e0e0e0;
+          padding-bottom: 0.25rem;
+        }
+        .receipt-group:first-of-type .receipt-round-header {
+          margin-top: 0.25rem;
         }
         .receipt-item-row {
           display: flex;
