@@ -11,7 +11,12 @@ export default function Navbar() {
   const [isTesting, setIsTesting] = useState(false);
 
   useEffect(() => {
-    setIsTesting(localStorage.getItem("zTestingMode") === "true");
+    const testMode = localStorage.getItem("zTestingMode") === "true";
+    if (testMode) {
+      setTimeout(() => {
+        setIsTesting(true);
+      }, 0);
+    }
   }, []);
 
   const isActive = (path: string) => {
@@ -74,9 +79,14 @@ export default function Navbar() {
 
             {/* ── Public links (for non-logged-in users) ── */}
             {!loading && !isAdmin && !member && (
-              <Link href="/about" className={`nav-link ${isActive("/about") ? "active" : ""}`}>
+              <>
+                <Link href="/about" className={`nav-link ${isActive("/about") ? "active" : ""}`}>
                   Tentang
-              </Link>
+                </Link>
+                <Link href="/leaderboard" className={`nav-link ${isActive("/leaderboard") ? "active" : ""}`}>
+                  Papan Peringkat
+                </Link>
+              </>
             )}
           </div>
 

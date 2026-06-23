@@ -14,10 +14,10 @@ service cloud.firestore {
         request.auth.token.admin == true ||
         request.auth.token.email == "gnavsih1@gmail.com" ||
         request.auth.token.email == "admin@canteen375.com" ||
-        request.auth.token.email == "irene@canteen375.com" ||
+        request.auth.token.email == "siti@canteen375.com" ||
         request.auth.token.email == "amalia@canteen375.com" ||
         request.auth.token.email == "eka@canteen375.com" ||
-        request.auth.token.email == "dina@canteen375.com"
+        request.auth.token.email == "widya@canteen375.com"
       );
     }
 
@@ -93,9 +93,7 @@ service cloud.firestore {
     // Members: document id is human-readable; field uid == Firebase Auth UID.
     // Register page checks duplicate via getDoc before sign-up (still anonymous): allow get only if doc is absent so existing profiles stay private.
     match /Members/{memberDocId} {
-      allow get: if !exists(/databases/$(database)/documents/Members/$(memberDocId))
-                  || isAuthenticated();
-      allow list: if isAuthenticated();
+      allow read: if true;
       allow create: if isAuthenticated()
                     && request.resource.data.uid == request.auth.uid
                     && request.resource.data.role == "member";
@@ -130,7 +128,7 @@ service cloud.firestore {
 
     // ── VOUCHER GROUP (CAMPAIGNS) ─────────────────────────────────────────────
     match /voucherGroup/{groupId} {
-      allow read: if isAuthenticated();
+      allow read: if true;
       allow create, delete: if isAdmin();
       // POS increments totalParticipants on cashback campaigns during order processing.
       allow update: if isAuthenticated();
@@ -138,7 +136,7 @@ service cloud.firestore {
 
     // ── COMPETITION RECORDS (LEADERBOARD DATA) ────────────────────────────────
     match /competitionRecords/{monthId} {
-      allow read: if isAuthenticated();
+      allow read: if true;
       // POS writes member scores (customerPoints, amountSpent, numberOfTransaction) during order processing.
       allow write: if isAuthenticated();
     }

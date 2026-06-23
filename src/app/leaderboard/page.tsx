@@ -18,7 +18,7 @@ interface AnimationState {
 }
 
 export default function LeaderboardPage() {
-  const { member, isAdmin, firebaseUser, loading: sessionLoading } = useMember();
+  const { member, isAdmin, loading: sessionLoading } = useMember();
   const [records, setRecords] = useState<CompetitionRecord[]>([]);
   const [members, setMembers] = useState<Record<string, Member>>({});
   const [selectedCategory, setSelectedCategory] = useState<Category>("Mahasiswa");
@@ -58,13 +58,6 @@ export default function LeaderboardPage() {
   // ─── Real-time listeners for Members + CompetitionRecords ───
   useEffect(() => {
     if (sessionLoading) return;
-
-    if (!firebaseUser) {
-      setMembers({});
-      setRecords([]);
-      setLoading(false);
-      return;
-    }
 
     setLoading(true);
     isFirstLoadRef.current = true;
@@ -118,16 +111,24 @@ export default function LeaderboardPage() {
       unsubMembers();
       unsubCompetition();
     };
-  }, [sessionLoading, firebaseUser, selectedMonth]);
+  }, [sessionLoading, selectedMonth]);
 
   // Active voucher campaigns (already real-time)
   useEffect(() => {
-    if (!firebaseUser) return;
     const q = query(collection(db, "voucherGroup"), where("isActive", "==", true));
     const unsub = onSnapshot(
       q,
       (snap) => {
-        setActivePrograms(snap.docs.map(d => ({ id: d.id, ...d.data() } as VoucherGroup)));
+        const now = new Date();
+        const active = snap.docs
+          .map(d => ({ id: d.id, ...d.data() } as VoucherGroup))
+          .filter(prog => {
+            if (prog.expireDate) {
+              return prog.expireDate.toDate() > now;
+            }
+            return true;
+          });
+        setActivePrograms(active);
       },
       (err) => {
         console.error("Leaderboard voucherGroup listener:", err);
@@ -135,7 +136,7 @@ export default function LeaderboardPage() {
       }
     );
     return () => unsub();
-  }, [firebaseUser]);
+  }, []);
 
   // ─── Detect point bumps & rank changes ───
   const detectAnimations = useCallback(
@@ -233,58 +234,6 @@ export default function LeaderboardPage() {
 
   if (sessionLoading) {
     return <div className="loading-screen">Loading...</div>;
-  }
-
-  if (!firebaseUser) {
-    return (
-      <>
-        <div className="leaderboard-wrapper">
-          <Navbar />
-          <main className="leaderboard-main">
-            <div className="leaderboard-container animate-fade-in">
-              <div className="lb-guest-card">
-                <h2>Papan peringkat</h2>
-                <p>Silakan masuk untuk melihat leaderboard dan program voucher.</p>
-                <Link href="/login?redirect=/leaderboard" className="lb-login-btn">
-                  Masuk
-                </Link>
-              </div>
-            </div>
-          </main>
-        </div>
-        <style jsx>{`
-          .leaderboard-wrapper { min-height: 100vh; background: #C51720; }
-          .leaderboard-main {
-            padding: 2rem 1rem;
-            display: flex;
-            justify-content: center;
-            background: rgba(250, 247, 242, 0.66);
-            backdrop-filter: blur(300px);
-            min-height: 70vh;
-          }
-          .leaderboard-container { width: 100%; max-width: 600px; }
-          .lb-guest-card {
-            background: white;
-            border-radius: 20px;
-            border: 1.5px solid #000;
-            padding: 2rem;
-            text-align: center;
-            color: #2d241d;
-          }
-          .lb-guest-card h2 { margin: 0 0 0.75rem; font-size: 1.5rem; }
-          .lb-guest-card p { margin: 0 0 1.25rem; color: #5d4037; line-height: 1.5; }
-          .lb-login-btn {
-            display: inline-block;
-            background: #C51720;
-            color: white;
-            font-weight: 700;
-            padding: 0.75rem 1.75rem;
-            border-radius: 12px;
-            text-decoration: none;
-          }
-        `}</style>
-      </>
-    );
   }
 
   return (
@@ -428,6 +377,15 @@ export default function LeaderboardPage() {
           {!isAdmin && member && myRank > 0 && !loading && (
             <div className="my-rank-summary">
               <p>Posisi kamu saat ini: <strong>Peringkat {myRank}</strong></p>
+            </div>
+          )}
+
+          {!loading && !member && (
+            <div className="guest-nudge-summary">
+              <p>Daftar atau masuk untuk mulai mengumpulkan poin dan memenangkan reward!</p>
+              <Link href="/login?redirect=/leaderboard" className="btn-guest-nudge">
+                Masuk / Daftar Member
+              </Link>
             </div>
           )}
 
@@ -992,6 +950,33 @@ export default function LeaderboardPage() {
           font-size: 0.75rem;
           font-weight: 700;
           cursor: pointer;
+        }
+        .guest-nudge-summary {
+          text-align: center;
+          background: white;
+          padding: 1.5rem;
+          border-radius: 12px;
+          border: 1.5px solid #000;
+          color: #2d241d;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 0.75rem;
+        }
+        .btn-guest-nudge {
+          background: #C51720;
+          color: white;
+          font-weight: 700;
+          padding: 0.6rem 1.25rem;
+          border-radius: 10px;
+          text-decoration: none;
+          transition: all 0.2s ease;
+          border: 1.5px solid #000;
+          font-size: 0.95rem;
+        }
+        .btn-guest-nudge:hover {
+          background: #a81219;
+          transform: translateY(-1px);
         }
       `}</style>
     </div>
