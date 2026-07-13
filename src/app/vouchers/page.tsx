@@ -86,7 +86,8 @@ export default function VouchersPage() {
   // 1. Group-based vouchers
   voucherGroups.forEach(g => {
     const isExpired = g.expireDate && g.expireDate.toDate() < now;
-    if (!isExpired) {
+    const isActive = g.isActive !== false;
+    if (!isExpired && isActive) {
       const matchVoucher = userVouchers.find(v =>
         v.voucherGroupId && v.voucherGroupId.trim() === g.voucherGroupId?.trim()
       );
