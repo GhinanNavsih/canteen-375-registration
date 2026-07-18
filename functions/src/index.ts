@@ -309,7 +309,14 @@ async function onTransactionStatusCreatedLogic(event: any) {
     const total = data.total || 0;
     const subTotal = data.subTotal || 0;
     const takeAwayFee = data.takeAwayFee || 0;
-    const pointsAdded = Math.floor(total / 10000); 
+
+    let pointsAdded = 0;
+    if (data.paymentMethod === "Program" && data.voucherProgramId) {
+        const nominal = data.programNominal || 0;
+        pointsAdded = Math.floor(Math.max(0, total - nominal) / 10000);
+    } else {
+        pointsAdded = Math.floor(total / 10000);
+    }
 
     await db.collection(getCol("pointTransactions", event.document)).add({
         memberId: data.memberId,
@@ -322,6 +329,8 @@ async function onTransactionStatusCreatedLogic(event: any) {
         paymentMethod: data.paymentMethod || "Pembayaran",
         timestamp: data.waktuPesan || admin.firestore.FieldValue.serverTimestamp(),
         sourcePath: event.document,
+        voucherProgramId: data.voucherProgramId || null,
+        programNominal: data.programNominal || 0,
     });
 }
 
@@ -345,7 +354,14 @@ async function onTransactionStatusUpdatedLogic(event: any) {
     const total = afterData.total || 0;
     const subTotal = afterData.subTotal || 0;
     const takeAwayFee = afterData.takeAwayFee || 0;
-    const pointsAdded = Math.floor(total / 10000); 
+
+    let pointsAdded = 0;
+    if (afterData.paymentMethod === "Program" && afterData.voucherProgramId) {
+        const nominal = afterData.programNominal || 0;
+        pointsAdded = Math.floor(Math.max(0, total - nominal) / 10000);
+    } else {
+        pointsAdded = Math.floor(total / 10000);
+    }
 
     const colName = getCol("pointTransactions", event.document);
     const querySnapshot = await db.collection(colName)
@@ -364,6 +380,8 @@ async function onTransactionStatusUpdatedLogic(event: any) {
             orderItems: afterData.orderItems || [],
             paymentMethod: afterData.paymentMethod || "Pembayaran",
             timestamp: afterData.waktuPesan || beforeData?.waktuPesan || admin.firestore.FieldValue.serverTimestamp(),
+            voucherProgramId: afterData.voucherProgramId || null,
+            programNominal: afterData.programNominal || 0,
         });
     } else {
         await db.collection(colName).add({
@@ -377,6 +395,8 @@ async function onTransactionStatusUpdatedLogic(event: any) {
             paymentMethod: afterData.paymentMethod || "Pembayaran",
             timestamp: afterData.waktuPesan || admin.firestore.FieldValue.serverTimestamp(),
             sourcePath: event.document,
+            voucherProgramId: afterData.voucherProgramId || null,
+            programNominal: afterData.programNominal || 0,
         });
     }
 }

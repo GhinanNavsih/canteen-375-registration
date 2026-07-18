@@ -34,6 +34,8 @@ interface TransactionHistory {
   orderItems: OrderItem[];
   timestamp: any;
   paymentMethod: string;
+  voucherProgramId?: string;
+  programNominal?: number;
 }
 
 export default function HistoryPage() {
@@ -264,6 +266,11 @@ export default function HistoryPage() {
                             <div className="r-points-earned">
                               ⭐ Anda mendapatkan <strong>{tx.pointsAdded} Poin</strong> dari transaksi ini!
                             </div>
+                            {tx.paymentMethod === "Program" && (
+                              <div className="voucher-program-points-explanation">
+                                💡 <strong>Metode Program Voucher:</strong> Poin hanya dihitung dari nilai belanja di luar nilai voucher program ({formatPrice(tx.programNominal || 0)}). Tambahan belanja Anda sebesar {formatPrice(Math.max(0, (tx.total ?? 0) - (tx.programNominal || 0)))} menghasilkan {tx.pointsAdded} Poin (1 Poin per {formatPrice(10000)} tambahan).
+                              </div>
+                            )}
                           </div>
                         </div>
                       );
@@ -582,6 +589,17 @@ export default function HistoryPage() {
         }
         .r-points-earned strong {
           color: #f57c00;
+        }
+        .voucher-program-points-explanation {
+          margin-top: 0.75rem;
+          background: #eff6ff;
+          border: 1px solid #bfdbfe;
+          padding: 0.75rem;
+          border-radius: 8px;
+          font-size: 0.8rem;
+          color: #1e40af;
+          line-height: 1.4;
+          text-align: left;
         }
 
         .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
