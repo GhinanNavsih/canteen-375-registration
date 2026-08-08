@@ -39,6 +39,7 @@ export default function LiveOrderDisplayPage() {
 
   const [basket, setBasket] = useState<LiveBasket | null>(null);
   const [connecting, setConnecting] = useState(true);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
 
   // Guard — this is a cashier-counter display, admin-only.
   useEffect(() => {
@@ -54,11 +55,20 @@ export default function LiveOrderDisplayPage() {
     const path = isTesting ? "zTesting_liveBasket/current" : "liveBasket/current";
     const basketRef = ref(rtdb, path);
 
-    const unsubscribe = onValue(basketRef, (snapshot) => {
-      setConnecting(false);
-      const data = snapshot.val() as LiveBasket | null;
-      setBasket(data);
-    });
+    const unsubscribe = onValue(
+      basketRef,
+      (snapshot) => {
+        setConnecting(false);
+        setConnectionError(null);
+        const data = snapshot.val() as LiveBasket | null;
+        setBasket(data);
+      },
+      (error) => {
+        setConnecting(false);
+        setConnectionError(error.message);
+        console.error("[LiveOrderDisplay] RTDB subscription failed:", error);
+      }
+    );
 
     return () => unsubscribe();
   }, [isAdmin, sessionLoading]);
@@ -143,6 +153,14 @@ export default function LiveOrderDisplayPage() {
           border-radius: 50%;
           background: #C51720;
           animation: lod-pulse 1.4s ease-in-out infinite;
+        }
+        .lod-live-badge-error {
+          background: #f3f3f3;
+          color: #6b6b6b;
+        }
+        .lod-live-badge-error .lod-live-dot {
+          background: #6b6b6b;
+          animation: none;
         }
         @keyframes lod-pulse {
           0%, 100% { opacity: 1; transform: scale(1); }
@@ -291,15 +309,27 @@ export default function LiveOrderDisplayPage() {
         <header className="lod-header">
           <h1 className="lod-title">Pesanan Anda</h1>
           <p className="lod-subtitle">Cek kembali sebelum pembayaran</p>
-          <span className="lod-live-badge">
+          <span className={`lod-live-badge${connectionError ? " lod-live-badge-error" : ""}`}>
             <span className="lod-live-dot" />
-            {connecting ? "Menghubungkan…" : "Live"}
+            {connectionError ? "Gagal terhubung" : connecting ? "Menghubungkan…" : "Live"}
           </span>
         </header>
 
         <div className="lod-card">
           <AnimatePresence mode="wait">
-            {!hasItems ? (
+            {connectionError ? (
+              <motion.div
+                key="error"
+                className="lod-empty"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+              >
+                <div className="lod-empty-icon">⚠️</div>
+                <div className="lod-empty-text">Tidak bisa terhubung ke pesanan langsung</div>
+                <div className="lod-empty-sub">{connectionError}</div>
+              </motion.div>
+            ) : !hasItems ? (
               <motion.div
                 key="empty"
                 className="lod-empty"
