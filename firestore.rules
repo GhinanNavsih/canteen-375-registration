@@ -11,13 +11,24 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && (
-        request.auth.token.admin == true ||
-        request.auth.token.email == "gnavsih1@gmail.com" ||
-        request.auth.token.email == "admin@canteen375.com" ||
-        request.auth.token.email == "siti@canteen375.com" ||
-        request.auth.token.email == "amalia@canteen375.com" ||
-        request.auth.token.email == "eka@canteen375.com" ||
-        request.auth.token.email == "widya@canteen375.com"
+        request.auth.token.get("admin", false) == true ||
+        request.auth.token.get("email", "") == "gnavsih1@gmail.com" ||
+        request.auth.token.get("email", "") == "admin@canteen375.com" ||
+        request.auth.token.get("email", "") == "siti@canteen375.com" ||
+        request.auth.token.get("email", "") == "amalia@canteen375.com" ||
+        request.auth.token.get("email", "") == "eka@canteen375.com" ||
+        request.auth.token.get("email", "") == "widya@canteen375.com"
+      );
+    }
+
+    // POS checkout uses the administrator account today.  A dedicated POS
+    // cashier can be granted the explicit posOperator custom claim later;
+    // ordinary authenticated members must not mutate financial or loyalty
+    // materialized data.
+    function isPosOperator() {
+      return isAuthenticated() && (
+        isAdmin() ||
+        request.auth.token.get("posOperator", false) == true
       );
     }
 
@@ -30,6 +41,16 @@ service cloud.firestore {
         request.resource.data.totalSettled <= request.resource.data.totalRedeemed;
     }
 
+    function validVoucherProgramCountersForUpdate() {
+      return request.resource.data.status in ["active", "paid", "closed"] &&
+        (!request.resource.data.keys().hasAny(["totalRedeemed"]) ||
+          (request.resource.data.totalRedeemed is int && request.resource.data.totalRedeemed >= 0)) &&
+        (!request.resource.data.keys().hasAny(["totalSettled"]) ||
+          (request.resource.data.totalSettled is int && request.resource.data.totalSettled >= 0)) &&
+        (!request.resource.data.keys().hasAll(["totalRedeemed", "totalSettled"]) ||
+          request.resource.data.totalSettled <= request.resource.data.totalRedeemed);
+    }
+
     function validVoucherProgramFields() {
       return request.resource.data.programName is string &&
         request.resource.data.programName.size() > 0 &&
@@ -39,6 +60,17 @@ service cloud.firestore {
         request.resource.data.defaultNominal >= 0 &&
         request.resource.data.revision is int &&
         request.resource.data.revision >= 0;
+    }
+
+    function validVoucherProgramFieldsForUpdate() {
+      return (!request.resource.data.keys().hasAny(["programName"]) ||
+          (request.resource.data.programName is string && request.resource.data.programName.size() > 0)) &&
+        (!request.resource.data.keys().hasAny(["institutionName"]) ||
+          (request.resource.data.institutionName is string && request.resource.data.institutionName.size() > 0)) &&
+        (!request.resource.data.keys().hasAny(["defaultNominal"]) ||
+          (request.resource.data.defaultNominal is int && request.resource.data.defaultNominal >= 0)) &&
+        (!request.resource.data.keys().hasAny(["revision"]) ||
+          (request.resource.data.revision is int && request.resource.data.revision >= 0));
     }
 
     function validVoucherProgramCreate() {
@@ -106,6 +138,26 @@ service cloud.firestore {
         request.resource.data.totalClaimed <= request.resource.data.totalParticipants &&
         request.resource.data.totalRedemptions is int &&
         request.resource.data.totalRedemptions >= request.resource.data.totalClaimed;
+    }
+
+    function validMemberCampaignForUpdate() {
+      return request.resource.data.type == "cashbackCampaign" &&
+        (!request.resource.data.keys().hasAny(["status"]) || request.resource.data.status in ["active", "archived"]) &&
+        (!request.resource.data.keys().hasAny(["isActive"]) || request.resource.data.isActive is bool) &&
+        (!request.resource.data.keys().hasAll(["status", "isActive"]) ||
+          (request.resource.data.status == "active" && request.resource.data.isActive == true) ||
+          (request.resource.data.status == "archived" && request.resource.data.isActive == false)) &&
+        (!request.resource.data.keys().hasAny(["threshold"]) || (request.resource.data.threshold is int && request.resource.data.threshold > 0)) &&
+        (!request.resource.data.keys().hasAny(["value"]) || (request.resource.data.value is int && request.resource.data.value > 0)) &&
+        (!request.resource.data.keys().hasAny(["transactionRequirement"]) || (request.resource.data.transactionRequirement is int && request.resource.data.transactionRequirement >= 0)) &&
+        (!request.resource.data.keys().hasAny(["activeDate"]) || request.resource.data.activeDate is timestamp) &&
+        (!request.resource.data.keys().hasAny(["expireDate"]) || request.resource.data.expireDate is timestamp) &&
+        (!request.resource.data.keys().hasAll(["activeDate", "expireDate"]) || request.resource.data.expireDate >= request.resource.data.activeDate) &&
+        (!request.resource.data.keys().hasAny(["totalParticipants"]) || (request.resource.data.totalParticipants is int && request.resource.data.totalParticipants >= 0)) &&
+        (!request.resource.data.keys().hasAny(["totalClaimed"]) || (request.resource.data.totalClaimed is int && request.resource.data.totalClaimed >= 0)) &&
+        (!request.resource.data.keys().hasAny(["totalRedemptions"]) || (request.resource.data.totalRedemptions is int && request.resource.data.totalRedemptions >= 0)) &&
+        (!request.resource.data.keys().hasAll(["totalParticipants", "totalClaimed"]) || request.resource.data.totalClaimed <= request.resource.data.totalParticipants) &&
+        (!request.resource.data.keys().hasAll(["totalRedemptions", "totalClaimed"]) || request.resource.data.totalRedemptions >= request.resource.data.totalClaimed);
     }
 
     // ── NEW COLLECTIONS FOR POS APP ───────────────────────────────────────────
@@ -181,12 +233,12 @@ service cloud.firestore {
     match /voucher/{id} {
       allow read: if isAdmin()
                     || (isAuthenticated() && memberIdRefersToAuthUser(resource.data.userId));
-      allow write: if isAdmin();
+      allow write: if isPosOperator();
     }
     match /vouchers/{id} {
       allow read: if isAdmin()
                     || (isAuthenticated() && memberIdRefersToAuthUser(resource.data.userId));
-      allow create, update: if isAdmin();
+      allow create, update: if isPosOperator();
       allow delete: if false;
     }
 
@@ -194,12 +246,12 @@ service cloud.firestore {
     match /voucherPrograms/{id} {
       allow read: if isAuthenticated();
       allow create: if isAdmin() && validVoucherProgramCreate();
-      allow update: if isAdmin() && resource.data.status != "closed" &&
-        validVoucherProgramCounters() && validVoucherProgramFields();
+      allow update: if isPosOperator() && resource.data.status != "closed" &&
+        validVoucherProgramCountersForUpdate() && validVoucherProgramFieldsForUpdate();
       allow delete: if isAdmin() && resource.data.status != "closed";
       match /redemptions/{operationId} {
         allow read: if isAuthenticated();
-        allow create, update: if isAdmin() &&
+        allow create, update: if isPosOperator() &&
           request.resource.data.operationId == operationId &&
           request.resource.data.status == "completed" &&
           ((request.resource.data.eventType == "redemption" &&
@@ -210,7 +262,7 @@ service cloud.firestore {
       }
       match /settlements/{operationId} {
         allow read: if isAuthenticated();
-        allow create, update: if isAdmin() &&
+        allow create, update: if isPosOperator() &&
           request.resource.data.operationId == operationId &&
           request.resource.data.status == "completed" &&
           request.resource.data.amount is int && request.resource.data.amount > 0 &&
@@ -231,8 +283,8 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAdmin() && request.resource.data.voucherGroupId == groupId &&
         validMemberCampaign();
-      allow update: if isAdmin() && request.resource.data.voucherGroupId == groupId &&
-        validMemberCampaign() &&
+      allow update: if isPosOperator() && request.resource.data.voucherGroupId == groupId &&
+        validMemberCampaignForUpdate() &&
         (resource.data.status != "archived" || request.resource.data.status == "archived");
       allow delete: if false;
     }
@@ -240,11 +292,11 @@ service cloud.firestore {
     // ── COMPETITION RECORDS (LEADERBOARD DATA) ────────────────────────────────
     match /competitionRecords/{monthId} {
       allow read: if isAuthenticated();
-      allow create, update: if isAdmin();
+      allow create, update: if isPosOperator();
       allow delete: if false;
       match /members/{memberId} {
         allow read: if isAuthenticated();
-        allow create, update: if isAdmin();
+        allow create, update: if isPosOperator();
         allow delete: if false;
       }
     }
@@ -257,16 +309,16 @@ service cloud.firestore {
     match /pointTransactions/{id} {
       allow read: if isAdmin() ||
         (isAuthenticated() && memberIdRefersToAuthUser(resource.data.memberId));
-      allow create: if isAdmin() && request.resource.data.operationId == id &&
+      allow create: if isPosOperator() && request.resource.data.operationId == id &&
         validMemberPointLedger();
-      allow update: if isAdmin() && resource.data.operationId == id &&
+      allow update: if isPosOperator() && resource.data.operationId == id &&
         request.resource.data.operationId == id && validMemberPointLedger();
       allow delete: if false;
     }
 
     match /memberProgramOperations/{id} {
       allow read: if isAdmin();
-      allow create, update: if isAdmin() && request.resource.data.operationId == id &&
+      allow create, update: if isPosOperator() && request.resource.data.operationId == id &&
         validMemberProgramOperation();
       allow delete: if false;
     }
@@ -284,7 +336,7 @@ service cloud.firestore {
 
     match /externalVoucherClaims/{id} {
       allow read: if isAdmin();
-      allow create, update: if isAdmin() && request.resource.data.operationId == id &&
+      allow create, update: if isPosOperator() && request.resource.data.operationId == id &&
         request.resource.data.status in ["pending", "failed", "completed"];
       allow delete: if false;
     }
@@ -447,11 +499,11 @@ service cloud.firestore {
 
     match /zTesting_competitionRecords/{id} {
       allow read: if isAuthenticated();
-      allow create, update: if isAdmin();
+      allow create, update: if isPosOperator();
       allow delete: if false;
       match /members/{memberId} {
         allow read: if isAuthenticated();
-        allow create, update: if isAdmin();
+        allow create, update: if isPosOperator();
         allow delete: if false;
       }
     }
@@ -459,13 +511,13 @@ service cloud.firestore {
     match /zTesting_voucher/{id} {
       allow read: if isAdmin() ||
         (isAuthenticated() && memberIdRefersToAuthUser(resource.data.userId));
-      allow write: if isAdmin();
+      allow write: if isPosOperator();
     }
 
     match /zTesting_vouchers/{id} {
       allow read: if isAdmin() ||
         (isAuthenticated() && memberIdRefersToAuthUser(resource.data.userId));
-      allow create, update: if isAdmin();
+      allow create, update: if isPosOperator();
       allow delete: if false;
     }
 
@@ -473,8 +525,8 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAdmin() && request.resource.data.voucherGroupId == id &&
         validMemberCampaign();
-      allow update: if isAdmin() && request.resource.data.voucherGroupId == id &&
-        validMemberCampaign() &&
+      allow update: if isPosOperator() && request.resource.data.voucherGroupId == id &&
+        validMemberCampaignForUpdate() &&
         (resource.data.status != "archived" || request.resource.data.status == "archived");
       allow delete: if false;
     }
@@ -482,19 +534,19 @@ service cloud.firestore {
     match /zTesting_voucherPrograms/{id} {
       allow read: if isAuthenticated();
       allow create: if isAdmin() && validVoucherProgramCreate();
-      allow update: if isAdmin() && resource.data.status != "closed" &&
-        validVoucherProgramCounters() && validVoucherProgramFields();
+      allow update: if isPosOperator() && resource.data.status != "closed" &&
+        validVoucherProgramCountersForUpdate() && validVoucherProgramFieldsForUpdate();
       allow delete: if isAdmin() && resource.data.status != "closed";
       match /redemptions/{operationId} {
         allow read: if isAuthenticated();
-        allow create, update: if isAdmin() &&
+        allow create, update: if isPosOperator() &&
           request.resource.data.operationId == operationId &&
           request.resource.data.status == "completed";
         allow delete: if false;
       }
       match /settlements/{operationId} {
         allow read: if isAuthenticated();
-        allow create, update: if isAdmin() &&
+        allow create, update: if isPosOperator() &&
           request.resource.data.operationId == operationId &&
           request.resource.data.status == "completed" &&
           request.resource.data.amount is int && request.resource.data.amount > 0 &&
@@ -529,16 +581,16 @@ service cloud.firestore {
     match /zTesting_pointTransactions/{id} {
       allow read: if isAdmin() ||
         (isAuthenticated() && memberIdRefersToAuthUser(resource.data.memberId));
-      allow create: if isAdmin() && request.resource.data.operationId == id &&
+      allow create: if isPosOperator() && request.resource.data.operationId == id &&
         validMemberPointLedger();
-      allow update: if isAdmin() && resource.data.operationId == id &&
+      allow update: if isPosOperator() && resource.data.operationId == id &&
         request.resource.data.operationId == id && validMemberPointLedger();
       allow delete: if false;
     }
 
     match /zTesting_memberProgramOperations/{id} {
       allow read: if isAdmin();
-      allow create, update: if isAdmin() && request.resource.data.operationId == id &&
+      allow create, update: if isPosOperator() && request.resource.data.operationId == id &&
         validMemberProgramOperation();
       allow delete: if false;
     }
@@ -556,7 +608,7 @@ service cloud.firestore {
 
     match /zTesting_externalVoucherClaims/{id} {
       allow read: if isAdmin();
-      allow create, update: if isAdmin() && request.resource.data.operationId == id &&
+      allow create, update: if isPosOperator() && request.resource.data.operationId == id &&
         request.resource.data.status in ["pending", "failed", "completed"];
       allow delete: if false;
     }
