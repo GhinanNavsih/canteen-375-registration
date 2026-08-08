@@ -7,13 +7,27 @@ import { useMember } from "@/context/MemberContext";
 import Navbar from "@/components/Navbar";
 import { db } from "@/lib/firebase";
 import { onSnapshot, query, where } from "firebase/firestore";
-import { doc, collection } from "@/lib/firebase";
-import { Member } from "@/types/member";
+import type { DocumentData, QuerySnapshot } from "firebase/firestore";
+import { collection } from "@/lib/firebase";
 import { VoucherGroup, Voucher } from "@/types/voucher";
+import {
+  asProgramDate,
+  findCampaignVoucher,
+  isActiveCashbackCampaign,
+  isVoucherWithinDates,
+  parseProgramNumber,
+  voucherStatusIsHistory,
+  voucherStatusIsVisible,
+} from "@/lib/memberProgram";
+
+type VoucherListItem = {
+  type: "group" | "standalone";
+  data: VoucherGroup | Voucher;
+  matchVoucher?: Voucher;
+};
 
 export default function VouchersPage() {
   const { member, loading: sessionLoading } = useMember();
-  const [liveMember, setLiveMember] = useState<Member | null>(null);
   const [voucherGroups, setVoucherGroups] = useState<VoucherGroup[]>([]);
   const [userVouchers, setUserVouchers] = useState<Voucher[]>([]);
   const [showModal, setShowModal] = useState(false);
@@ -28,44 +42,31 @@ export default function VouchersPage() {
     }
 
     if (member) {
-      const unsub = onSnapshot(doc(db, "Members", member.id), (docSnap) => {
-        if (docSnap.exists()) {
-          setLiveMember({ id: docSnap.id, ...docSnap.data() } as Member);
-        }
-      });
-
       // Fetch All Campaigns (Active and Inactive for history context)
-      const qGroups = query(collection(db, "voucherGroup"));
-      const unsubGroups = onSnapshot(qGroups, (snap) => {
+      const unsubGroups = onSnapshot(collection(db, "voucherGroup"), (snap) => {
         setVoucherGroups(snap.docs.map(d => ({ id: d.id, ...d.data() } as VoucherGroup)));
       });
 
       // Fetch User's Vouchers
       const memberId = member.id.trim();
 
-      const handleSnap = (snap: any) => {
-        setUserVouchers(prev => {
-          const merged = [...prev];
-          snap.docs.forEach((d: any) => {
-            if (!merged.find(v => v.id === d.id)) {
-              merged.push({ id: d.id, ...d.data() } as Voucher);
-            } else {
-              const idx = merged.findIndex(v => v.id === d.id);
-              merged[idx] = { id: d.id, ...d.data() } as Voucher;
-            }
-          });
-          return merged;
+      const voucherSources = new Map<string, Map<string, Voucher>>();
+      const handleSnap = (source: string, snap: QuerySnapshot<DocumentData>) => {
+        const sourceDocs = new Map<string, Voucher>();
+        snap.docs.forEach((entry) => {
+          sourceDocs.set(entry.id, { id: entry.id, ...entry.data() } as Voucher);
         });
+        voucherSources.set(source, sourceDocs);
+        setUserVouchers(Array.from(voucherSources.values()).flatMap((items) => Array.from(items.values())));
       };
 
       const qByUserId = query(collection(db, "voucher"), where("userId", "==", memberId));
       const qPluralId = query(collection(db, "vouchers"), where("userId", "==", memberId));
 
-      const unsub1 = onSnapshot(qByUserId, handleSnap);
-      const unsub2 = onSnapshot(qPluralId, handleSnap);
+      const unsub1 = onSnapshot(qByUserId, (snap) => handleSnap("birthday", snap));
+      const unsub2 = onSnapshot(qPluralId, (snap) => handleSnap("pos", snap));
 
       return () => {
-        unsub();
         unsubGroups();
         unsub1();
         unsub2();
@@ -81,17 +82,14 @@ export default function VouchersPage() {
 
   // Active Vouchers: Not claimed yet, and either active or future
   // Combine all vouchers (from groups + standalones like birthday)
-  const activeVouchers: any[] = [];
+  const activeVouchers: VoucherListItem[] = [];
 
   // 1. Group-based vouchers
   voucherGroups.forEach(g => {
-    const isExpired = g.expireDate && g.expireDate.toDate() < now;
-    const isActive = g.isActive !== false;
-    if (!isExpired && isActive) {
-      const matchVoucher = userVouchers.find(v =>
-        v.voucherGroupId && v.voucherGroupId.trim() === g.voucherGroupId?.trim()
-      );
-      if (matchVoucher?.status !== "CLAIMED") {
+    if (isActiveCashbackCampaign(g, now)) {
+      const matchVoucher = findCampaignVoucher(userVouchers, g.voucherGroupId || g.id || "");
+      if ((!matchVoucher || voucherStatusIsVisible(matchVoucher.status)) &&
+          (!matchVoucher || isVoucherWithinDates(matchVoucher, now))) {
         activeVouchers.push({ type: 'group', data: g, matchVoucher });
       }
     }
@@ -100,16 +98,13 @@ export default function VouchersPage() {
   // 2. Standalone vouchers (like BDAY) that belong directly to the user
   userVouchers.forEach(v => {
     // If it's not tied to a voucherGroup AND it's not claimed AND not expired
-    if (!v.voucherGroupId && v.status !== "CLAIMED") {
-      const isExpired = v.expireDate && v.expireDate.toDate() < now;
-      if (!isExpired) {
-        activeVouchers.push({ type: 'standalone', data: v, matchVoucher: v });
-      }
+    if (!v.voucherGroupId && voucherStatusIsVisible(v.status) && isVoucherWithinDates(v, now)) {
+      activeVouchers.push({ type: 'standalone', data: v, matchVoucher: v });
     }
   });
 
-  // History Vouchers: Claimed
-  const historyVouchers = userVouchers.filter(v => v.status === "CLAIMED");
+  // History includes completed and terminal vouchers, including competition prizes.
+  const historyVouchers = userVouchers.filter(v => voucherStatusIsHistory(v.status));
 
   return (
     <div className="vouchers-wrapper">
@@ -151,23 +146,25 @@ export default function VouchersPage() {
                       const { data, matchVoucher } = item;
 
                       const voucherName = isGroup ? data.voucherName : data.voucherName;
-                      const value = isGroup ? data.value : data.value;
-                      const transactionReq = isGroup ? data.transactionRequirement : data.transactionRequirement;
+                      const value = parseProgramNumber(data.value);
+                      const transactionReq = parseProgramNumber(data.transactionRequirement);
 
-                      const userProgressPoints = matchVoucher ? matchVoucher.userPoints : 0;
+                      const userProgressPoints = matchVoucher ? parseProgramNumber(matchVoucher.userPoints) : 0;
                       // Standalone vouchers like BIRTHDAY don't have a threshold, they are ready immediately
-                      const threshold = isGroup ? data.threshold : 0;
-                      const percent = isGroup ? Math.min(100, (userProgressPoints / threshold) * 100) : 100;
+                      const threshold = isGroup ? parseProgramNumber(data.threshold) : 0;
+                      const percent = isGroup && threshold > 0
+                        ? Math.min(100, (userProgressPoints / threshold) * 100)
+                        : 100;
                       const remaining = isGroup ? Math.max(0, threshold - userProgressPoints) : 0;
 
-                      const status = matchVoucher?.status || "IN_PROGRESS";
-                      const isReadyToClaim = status === "READY_TO_CLAIM" || (isGroup && userProgressPoints >= threshold);
+                      const status = String(matchVoucher?.status || "IN_PROGRESS").toUpperCase();
+                      const isReadyToClaim = status === "READY_TO_CLAIM" || (isGroup && threshold > 0 && userProgressPoints >= threshold);
 
-                      const expDate = isGroup ? data.expireDate.toDate() : data.expireDate.toDate();
-                      const activeDate = isGroup ? data.activeDate?.toDate() : null;
+                      const expDate = asProgramDate(isGroup ? data.expireDate : matchVoucher?.expireDate);
+                      const activeDate = isGroup ? asProgramDate(data.activeDate) : null;
                       const isFuture = activeDate && activeDate > now;
 
-                      const diffMs = expDate.getTime() - now.getTime();
+                      const diffMs = expDate ? expDate.getTime() - now.getTime() : 0;
                       const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
                       const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
 
@@ -204,7 +201,7 @@ export default function VouchersPage() {
                             <>
                               <div className="v-urgency">
                                 <span className={`nudge-text ${diffMs < 86400000 ? 'critical' : diffMs < 604800000 ? 'urgent' : 'normal'}`}>
-                                  {diffMs < 604800000 ? `⏳ ${timerText}` : `s.d. ${expDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}`}
+                                  {expDate && diffMs < 604800000 ? `⏳ ${timerText}` : expDate ? `s.d. ${expDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}` : "Tidak ada batas waktu"}
                                 </span>
                               </div>
 
@@ -250,7 +247,7 @@ export default function VouchersPage() {
                         <div className="v-history-details">
                           <p>Berhasil ditukarkan pada:</p>
                           <p className="v-date">
-                            {voucher.lastUpdatedAt?.toDate().toLocaleDateString('id-ID', {
+                            {asProgramDate(voucher.lastUpdatedAt)?.toLocaleDateString('id-ID', {
                               day: 'numeric',
                               month: 'long',
                               year: 'numeric',

@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { query, where, orderBy, limit, onSnapshot } from "firebase/firestore";
+import { query, where, limit, onSnapshot } from "firebase/firestore";
 import { collection } from "@/lib/firebase";
 import { db } from "@/lib/firebase";
 import { useMember } from "@/context/MemberContext";
 import Navbar from "@/components/Navbar";
+import { parseProgramNumber, asProgramDate } from "@/lib/memberProgram";
 
 interface SelectedOption {
   groupName: string;
@@ -32,10 +33,14 @@ interface TransactionHistory {
   totalAmount?: number; // fallback for legacy records
   pointsAdded: number;
   orderItems: OrderItem[];
-  timestamp: any;
+  timestamp: unknown;
   paymentMethod: string;
   voucherProgramId?: string;
   programNominal?: number;
+  b2bNominal?: number;
+  ordinaryVoucherDiscount?: number;
+  eligibleAmount?: number;
+  eventType?: string;
 }
 
 export default function HistoryPage() {
@@ -56,22 +61,44 @@ export default function HistoryPage() {
     const q = query(
       collection(db, "pointTransactions"),
       where("memberId", "==", member.id.trim()),
-      orderBy("timestamp", "desc"),
-      limit(20)
+      limit(50)
     );
 
     // Set up real-time listener
     const unsubscribe = onSnapshot(
       q,
-      (querySnapshot: any) => {
+      (querySnapshot) => {
         const fetched: TransactionHistory[] = [];
-        querySnapshot.forEach((doc: any) => {
-          fetched.push({ id: doc.id, ...doc.data() } as TransactionHistory);
+        querySnapshot.forEach((doc) => {
+          const data = doc.data();
+          fetched.push({
+            id: doc.id,
+            transactionId: data.transactionId || data.sourceId || doc.id,
+            total: parseProgramNumber(data.total ?? data.finalBill ?? data.grossTotal),
+            subTotal: parseProgramNumber(data.subTotal ?? data.finalBill ?? data.grossTotal),
+            takeAwayFee: parseProgramNumber(data.takeAwayFee),
+            totalAmount: parseProgramNumber(data.totalAmount ?? data.finalBill ?? data.grossTotal),
+            pointsAdded: parseProgramNumber(data.pointsAdded ?? data.pointsDelta),
+            orderItems: Array.isArray(data.orderItems) ? data.orderItems as OrderItem[] : [],
+            timestamp: data.timestamp ?? data.eventAt ?? data.createdAt,
+            paymentMethod: data.paymentMethod || data.sourceType || "Pembayaran",
+            voucherProgramId: data.voucherProgramId,
+            programNominal: parseProgramNumber(data.programNominal ?? data.b2bNominal),
+            b2bNominal: parseProgramNumber(data.b2bNominal),
+            ordinaryVoucherDiscount: parseProgramNumber(data.ordinaryVoucherDiscount),
+            eligibleAmount: parseProgramNumber(data.eligibleAmount),
+            eventType: data.eventType,
+          });
         });
-        setHistory(fetched);
+        fetched.sort((left, right) => {
+          const leftDate = asProgramDate(left.timestamp)?.getTime() ?? 0;
+          const rightDate = asProgramDate(right.timestamp)?.getTime() ?? 0;
+          return rightDate - leftDate;
+        });
+        setHistory(fetched.slice(0, 20));
         setLoading(false);
       },
-      (error: any) => {
+      (error) => {
         console.error("Error listening to history:", error);
         setLoading(false);
       }
@@ -86,16 +113,9 @@ export default function HistoryPage() {
   };
 
   const formatPrice = (price: number) => `Rp${(price || 0).toLocaleString("id-ID")}`;
-  const formatDate = (ts: any) => {
-    if (!ts) return "Waktu tidak diketahui";
-    let date;
-    if (ts.toDate) {
-      date = ts.toDate();
-    } else if (typeof ts === 'string') {
-      date = new Date(ts);
-    } else {
-      return "Waktu tidak valid";
-    }
+  const formatDate = (ts: unknown) => {
+    const date = asProgramDate(ts);
+    if (!date) return ts ? "Waktu tidak valid" : "Waktu tidak diketahui";
     return date.toLocaleDateString("id-ID", {
       day: "numeric", month: "long", year: "numeric",
       hour: "2-digit", minute: "2-digit"
@@ -144,7 +164,7 @@ export default function HistoryPage() {
                         <div className="hc-icon">🍱</div>
                         <div className="hc-info">
                           <span className="hc-date">{formatDate(tx.timestamp)}</span>
-                          <span className="hc-summary">{totalItemsCount} item • {tx.paymentMethod || "Pembayaran"}</span>
+                          <span className="hc-summary">{tx.eventType === "reverse" ? "Koreksi poin" : `${totalItemsCount} item • ${tx.paymentMethod || "Pembayaran"}`}</span>
                         </div>
                       </div>
                       <div className="hc-right">
@@ -266,9 +286,9 @@ export default function HistoryPage() {
                             <div className="r-points-earned">
                               ⭐ Anda mendapatkan <strong>{tx.pointsAdded} Poin</strong> dari transaksi ini!
                             </div>
-                            {tx.paymentMethod === "Program" && (
+                            {(tx.paymentMethod === "Program" || (tx.b2bNominal ?? 0) > 0) && (
                               <div className="voucher-program-points-explanation">
-                                💡 <strong>Metode Program Voucher:</strong> Poin hanya dihitung dari nilai belanja di luar nilai voucher program ({formatPrice(tx.programNominal || 0)}). Tambahan belanja Anda sebesar {formatPrice(Math.max(0, (tx.total ?? 0) - (tx.programNominal || 0)))} menghasilkan {tx.pointsAdded} Poin (1 Poin per {formatPrice(10000)} tambahan).
+                                💡 <strong>Program Voucher:</strong> Poin dihitung dari nilai setelah voucher biasa, dikurangi sponsor B2B ({formatPrice(tx.b2bNominal || tx.programNominal || 0)}). Nilai yang menghasilkan poin: {formatPrice(tx.eligibleAmount ?? Math.max(0, (tx.total ?? 0) - (tx.b2bNominal || tx.programNominal || 0)))}.
                               </div>
                             )}
                           </div>

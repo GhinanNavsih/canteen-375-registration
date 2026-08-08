@@ -1,25 +1,42 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
 import { useMember } from "@/context/MemberContext";
 import Navbar from "@/components/Navbar";
 import { db } from "@/lib/firebase";
-import { onSnapshot, query, where, or, addDoc, serverTimestamp, setDoc } from "firebase/firestore";
+import { getDoc, getDocs, onSnapshot, query, where, serverTimestamp, setDoc } from "firebase/firestore";
 import { doc, collection } from "@/lib/firebase";
-import { Member } from "@/types/member";
+import { CompetitionRecord, Member } from "@/types/member";
 import { VoucherGroup, Voucher } from "@/types/voucher";
+import type { DocumentData, QuerySnapshot } from "firebase/firestore";
+import {
+  asProgramDate,
+  categoryMatches,
+  findCampaignVoucher,
+  isActiveCashbackCampaign,
+  jakartaPeriod,
+  parseProgramNumber,
+  sortCompetitionRecords,
+  voucherStatusIsVisible,
+  isVoucherWithinDates,
+} from "@/lib/memberProgram";
+
+type CompetitionStats = Record<string, Record<string, unknown>>;
+type ActiveVoucherItem = {
+  type: "group" | "standalone";
+  data: VoucherGroup | Voucher;
+  matchVoucher?: Voucher;
+};
 
 export default function DashboardPage() {
-  const { member, loading: sessionLoading, logoutMember, isAdmin } = useMember();
+  const { member, loading: sessionLoading, isAdmin } = useMember();
   const [liveMember, setLiveMember] = useState<Member | null>(null);
   const [voucherGroups, setVoucherGroups] = useState<VoucherGroup[]>([]);
   const [userVouchers, setUserVouchers] = useState<Voucher[]>([]);
   const [competitionPoints, setCompetitionPoints] = useState<number>(0);
-  const [competitionData, setCompetitionData] = useState<any>(null);
-  const [userRank, setUserRank] = useState<number | null>(null);
+  const [competitionData, setCompetitionData] = useState<CompetitionStats | null>(null);
   const [allMembers, setAllMembers] = useState<Record<string, Member>>({});
   const [showModal, setShowModal] = useState(false);
   const [selectedVoucher, setSelectedVoucher] = useState<Voucher | null>(null);
@@ -27,7 +44,7 @@ export default function DashboardPage() {
   const [feedbackStatus, setFeedbackStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
   const router = useRouter();
 
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  const currentMonth = jakartaPeriod();
 
   // Redirect admins to their own panel
   useEffect(() => {
@@ -45,7 +62,6 @@ export default function DashboardPage() {
     if (member) {
       // Fetch all members once to know categories for ranking
       const fetchMembers = async () => {
-        const { getDocs, collection } = await import("firebase/firestore");
         const snap = await getDocs(collection(db, "Members"));
         const membersMap: Record<string, Member> = {};
         snap.forEach(doc => {
@@ -63,92 +79,101 @@ export default function DashboardPage() {
         }
       });
 
-      // Listen for competition points (monthly doc — missing or no user entry => 0)
-      const unsubCompetition = onSnapshot(doc(db, "competitionRecords", currentMonth), (docSnap) => {
-        const mid = member.id.trim();
-        if (!docSnap.exists()) {
-          setCompetitionData(null);
-          setCompetitionPoints(0);
-          return;
-        }
-        const data = docSnap.data();
-        setCompetitionData(data);
-        const userStats = data[mid] ?? data[member.id];
-        setCompetitionPoints(userStats?.customerPoints ?? 0);
-      });
-
-      // Fetch Active Campaigns
-      const qGroups = query(collection(db, "voucherGroup"), where("isActive", "==", true));
-      const unsubGroups = onSnapshot(qGroups, (snap) => {
-        setVoucherGroups(snap.docs.map(d => ({ id: d.id, ...d.data() } as VoucherGroup)));
-      });
-
-      const unsubVouchers: (() => void)[] = [];
-      const handleSnap = (snap: any) => {
-        setUserVouchers(prev => {
-          const merged = [...prev];
-          snap.docs.forEach((d: any) => {
-            if (!merged.find(v => v.id === d.id)) {
-              merged.push({ id: d.id, ...d.data() } as Voucher);
-            } else {
-              const idx = merged.findIndex(v => v.id === d.id);
-              merged[idx] = { id: d.id, ...d.data() } as Voucher;
-            }
+      // New POS writes canonical monthly member documents.  A legacy fallback
+      // keeps older months readable without recreating the old write path.
+      let competitionFallbackActive = true;
+      const unsubCompetition = onSnapshot(
+        collection(db, `competitionRecords/${currentMonth}/members`),
+        (snap) => {
+          const records: CompetitionStats = {};
+          snap.forEach((entry) => {
+            records[entry.id] = entry.data();
           });
-          return merged;
+          if (snap.docs.length > 0) {
+            competitionFallbackActive = false;
+            setCompetitionData(records);
+            setCompetitionPoints(
+              parseProgramNumber(records[member.id.trim()]?.customerPoints ?? records[member.id.trim()]?.points)
+            );
+            return;
+          }
+
+          if (!competitionFallbackActive) return;
+          getDoc(doc(db, "competitionRecords", currentMonth)).then((legacySnap) => {
+            if (!legacySnap.exists()) {
+              setCompetitionData(null);
+              setCompetitionPoints(0);
+              return;
+            }
+            const legacy = legacySnap.data() as CompetitionStats;
+            setCompetitionData(legacy);
+            const userStats = legacy[member.id.trim()] ?? legacy[member.id];
+            setCompetitionPoints(parseProgramNumber(userStats?.customerPoints ?? userStats?.points));
+          }).catch((error) => console.error("Competition fallback error:", error));
+        },
+        (error) => console.error("Competition listener error:", error)
+      );
+
+      // Fetch only valid active cashback campaigns.  Filtering client-side
+      // avoids a fragile composite index and fails closed for legacy data.
+      const unsubGroups = onSnapshot(collection(db, "voucherGroup"), (snap) => {
+        setVoucherGroups(
+          snap.docs
+            .map(d => ({ id: d.id, ...d.data() } as VoucherGroup))
+            .filter((group) => isActiveCashbackCampaign(group))
+        );
+      });
+
+      const voucherSources = new Map<string, Map<string, Voucher>>();
+      const unsubVouchers: (() => void)[] = [];
+      const handleSnap = (source: string, snap: QuerySnapshot<DocumentData>) => {
+        const sourceDocs = new Map<string, Voucher>();
+        snap.docs.forEach((entry) => {
+          sourceDocs.set(entry.id, { id: entry.id, ...entry.data() } as Voucher);
         });
+        voucherSources.set(source, sourceDocs);
+        setUserVouchers(Array.from(voucherSources.values()).flatMap((items) => Array.from(items.values())));
       };
 
       const qByUserId = query(collection(db, "voucher"), where("userId", "==", member.id.trim()));
       const qPluralId = query(collection(db, "vouchers"), where("userId", "==", member.id.trim()));
 
-      unsubVouchers.push(onSnapshot(qByUserId, handleSnap));
-      unsubVouchers.push(onSnapshot(qPluralId, handleSnap));
+      unsubVouchers.push(onSnapshot(qByUserId, (snap) => handleSnap("birthday", snap)));
+      unsubVouchers.push(onSnapshot(qPluralId, (snap) => handleSnap("pos", snap)));
 
       return () => {
         unsub();
         unsubCompetition();
         unsubGroups();
+        competitionFallbackActive = false;
         unsubVouchers.forEach(fn => fn());
       };
     }
-  }, [member, sessionLoading, router, currentMonth]);
+  }, [member, sessionLoading, isAdmin, router, currentMonth]);
 
-  // Reactive Rank Calculation
-  useEffect(() => {
-    if (!member || Object.keys(allMembers).length === 0) return;
-    if (!competitionData) {
-      setUserRank(null);
-      return;
-    }
+  const userRank = useMemo(() => {
+    if (!member || !competitionData || Object.keys(allMembers).length === 0) return null;
 
     const targetId = member.id.trim();
-    const targetCategory = (liveMember?.category || member.category || "").trim();
-
-    const records: any[] = [];
-    Object.entries(competitionData).forEach(([mId, stats]: [string, any]) => {
+    const targetCategory = liveMember?.category || member.category || "";
+    const records: CompetitionRecord[] = [];
+    Object.entries(competitionData).forEach(([mId, stats]) => {
       const trimmedMId = mId.trim();
       const mInfo = allMembers[trimmedMId];
-
-      // Match the logic used in LeaderboardPage
-      if (mInfo && mInfo.category?.trim() === targetCategory) {
+      if (mInfo && categoryMatches(mInfo.category, targetCategory)) {
         records.push({
           memberId: trimmedMId,
-          points: stats.customerPoints || 0,
-          amountSpent: stats.amountSpent || 0,
-          numberOfTransaction: stats.numberOfTransaction || 0
+          memberName: "",
+          points: parseProgramNumber(stats.customerPoints ?? stats.points),
+          amountSpent: parseProgramNumber(stats.amountSpent),
+          numberOfTransaction: parseProgramNumber(stats.numberOfTransaction),
+          category: mInfo.category,
         });
       }
     });
 
-    const sorted = records.sort((a, b) => {
-      if (b.points !== a.points) return b.points - a.points;
-      if (b.numberOfTransaction !== a.numberOfTransaction) return b.numberOfTransaction - a.numberOfTransaction;
-      return b.amountSpent - a.amountSpent;
-    });
-
-    const rank = sorted.findIndex(r => r.memberId === targetId) + 1;
-    setUserRank(rank > 0 ? rank : null);
+    const rank = sortCompetitionRecords(records).findIndex((record) => record.memberId === targetId) + 1;
+    return rank > 0 ? rank : null;
   }, [member, competitionData, allMembers, liveMember]);
 
   const handleFeedbackSubmit = async (e: React.FormEvent) => {
@@ -238,28 +263,27 @@ export default function DashboardPage() {
 
           {(() => {
             const now = new Date();
-            const activeVouchers: any[] = [];
+            const activeVouchers: ActiveVoucherItem[] = [];
 
             // 1. Group-based vouchers
             voucherGroups.forEach(g => {
-              const isExpired = g.expireDate && g.expireDate.toDate() < now;
-              if (!isExpired) {
-                const matchVoucher = userVouchers.find(v =>
-                  v.voucherGroupId && v.voucherGroupId.trim() === g.voucherGroupId?.trim()
-                );
-                if (matchVoucher?.status !== "CLAIMED") {
-                  activeVouchers.push({ type: 'group', data: g, matchVoucher });
-                }
+              const campaignId = g.voucherGroupId || g.id || "";
+              const matchVoucher = findCampaignVoucher(userVouchers, campaignId);
+              const voucherVisible = !matchVoucher || voucherStatusIsVisible(matchVoucher.status);
+              const voucherInDate = !matchVoucher || isVoucherWithinDates(matchVoucher, now);
+              if (voucherVisible && voucherInDate) {
+                activeVouchers.push({ type: 'group', data: g, matchVoucher });
               }
             });
 
             // 2. Standalone vouchers (like BDAY) that belong directly to the user
             userVouchers.forEach(v => {
-              if (!v.voucherGroupId && v.status !== "CLAIMED") {
-                const isExpired = v.expireDate && v.expireDate.toDate() < now;
-                if (!isExpired) {
-                  activeVouchers.push({ type: 'standalone', data: v, matchVoucher: v });
-                }
+              if (
+                !v.voucherGroupId &&
+                voucherStatusIsVisible(v.status) &&
+                isVoucherWithinDates(v, now)
+              ) {
+                activeVouchers.push({ type: 'standalone', data: v, matchVoucher: v });
               }
             });
 
@@ -282,20 +306,21 @@ export default function DashboardPage() {
                     const { data, matchVoucher } = item;
 
                     const voucherName = isGroup ? data.voucherName : data.voucherName;
-                    const value = isGroup ? data.value : data.value;
-                    const transactionReq = isGroup ? data.transactionRequirement : data.transactionRequirement;
+                    const value = parseProgramNumber(data.value);
+                    const transactionReq = parseProgramNumber(data.transactionRequirement);
 
-                    const userProgressPoints = matchVoucher ? matchVoucher.userPoints : 0;
-                    const threshold = isGroup ? data.threshold : 0;
-                    const percent = isGroup ? Math.min(100, (userProgressPoints / threshold) * 100) : 100;
+                    const userProgressPoints = matchVoucher ? parseProgramNumber(matchVoucher.userPoints) : 0;
+                    const threshold = isGroup ? parseProgramNumber(data.threshold) : 0;
+                    const percent = isGroup && threshold > 0
+                      ? Math.min(100, (userProgressPoints / threshold) * 100)
+                      : 100;
                     const remaining = isGroup ? Math.max(0, threshold - userProgressPoints) : 0;
 
-                    const status = matchVoucher?.status || "IN_PROGRESS";
-                    const isClaimed = status === "CLAIMED";
-                    const isReadyToClaim = status === "READY_TO_CLAIM" || (isGroup && userProgressPoints >= threshold && !isClaimed);
+                    const status = String(matchVoucher?.status || "IN_PROGRESS").toUpperCase();
+                    const isReadyToClaim = status === "READY_TO_CLAIM" || (isGroup && threshold > 0 && userProgressPoints >= threshold);
 
-                    const expDate = isGroup ? data.expireDate.toDate() : data.expireDate.toDate();
-                    const diffMs = expDate.getTime() - now.getTime();
+                    const expDate = asProgramDate(isGroup ? data.expireDate : matchVoucher?.expireDate);
+                    const diffMs = expDate ? expDate.getTime() - now.getTime() : 0;
                     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
                     const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
 
@@ -332,7 +357,7 @@ export default function DashboardPage() {
 
                         <div className="c-footer-row">
                           <span className={`nudge-text ${diffMs < 86400000 ? 'critical' : diffMs < 604800000 ? 'urgent' : 'normal'}`}>
-                            {diffMs < 604800000 ? `⏳ ${timerText}` : `s.d. ${expDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}`}
+                            {expDate && diffMs < 604800000 ? `⏳ ${timerText}` : expDate ? `s.d. ${expDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}` : "Tidak ada batas waktu"}
                           </span>
                         </div>
 

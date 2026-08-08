@@ -1,5 +1,5 @@
 import * as admin from "firebase-admin";
-import { Timestamp, FieldValue } from "firebase-admin/firestore";
+import type { DocumentData, QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
@@ -7,6 +7,18 @@ import { logger } from "firebase-functions/v2";
 
 admin.initializeApp();
 const db = admin.firestore();
+
+type TriggerBase = {
+    document: string;
+    params: Record<string, string | undefined>;
+};
+type CreatedTriggerEvent = TriggerBase & { data?: { data: () => DocumentData } };
+type UpdatedTriggerEvent = TriggerBase & {
+    data?: {
+        before: { data: () => DocumentData };
+        after: { data: () => DocumentData };
+    };
+};
 
 // Helper to get collection name with optional testing prefix
 const getCol = (name: string, eventPath: string) => {
@@ -110,10 +122,10 @@ export const birthdayVoucherScheduler = onSchedule(
 );
 
 // SHARED LOGIC for onMemberCreated
-async function onMemberCreatedLogic(event: any) {
+async function onMemberCreatedLogic(event: CreatedTriggerEvent) {
     const memberId = event.params.memberId;
     const memberData = event.data?.data();
-    if (!memberData) return;
+    if (!memberId || !memberData) return;
     await issueBirthdayVoucherIfEligible(event.document, memberId, memberData);
 }
 
@@ -121,103 +133,15 @@ export const onMemberCreated = onDocumentCreated({ document: "Members/{memberId}
 export const onMemberCreatedTesting = onDocumentCreated({ document: "zTesting_Members/{memberId}", region: "us-central1" }, onMemberCreatedLogic);
 
 // FUNCTION 3: Monthly Reward Distribution
+//
+// Monthly competition finalization is owned by the POS
+// MemberProgramService.  This scheduled function intentionally remains
+// deployed as a no-op for backwards-compatible function names: issuing a
+// reward here would race the POS transaction and create duplicate prizes.
 export const distributeMonthlyRewards = onSchedule(
     { schedule: "0 0 1 * *", timeZone: "Asia/Jakarta", region: "us-central1" },
     async () => {
-        const nowUTC = new Date();
-        const wibOffset = 7 * 60 * 60 * 1000;
-        const nowWIB = new Date(nowUTC.getTime() + wibOffset);
-
-        let year = nowWIB.getUTCFullYear();
-        let month = nowWIB.getUTCMonth(); // 0-indexed (0 = Jan, 11 = Dec)
-
-        // Previous month calculation
-        month--;
-        if (month < 0) {
-            month = 11;
-            year--;
-        }
-        const prevMonthStr = `${year}-${String(month + 1).padStart(2, "0")}`;
-
-        try {
-            const [compDoc, membersSnap] = await Promise.all([
-                db.collection("competitionRecords").doc(prevMonthStr).get(),
-                db.collection("Members").get(),
-            ]);
-            if (!compDoc.exists) return;
-            const records = compDoc.data() || {};
-            const memberMap = new Map();
-            membersSnap.forEach((doc) => memberMap.set(doc.id, doc.data()));
-            const categoriesMap = new Map<string, any[]>();
-            for (const [memberId, stats] of Object.entries(records)) {
-                const memberData = memberMap.get(memberId);
-                if (!memberData) continue;
-                let category = memberData.category || "Umum";
-                if (category === "Guru/Dosen") {
-                    category = "Guru/Dosen/Staff";
-                }
-                const points = (stats as any).customerPoints || 0;
-                const numberOfTransaction = (stats as any).numberOfTransaction || 0;
-                const amountSpent = (stats as any).amountSpent || 0;
-                if (points > 0) {
-                    if (!categoriesMap.has(category)) categoriesMap.set(category, []);
-                    categoriesMap.get(category)!.push({
-                        id: memberId,
-                        name: memberData.fullName || memberData.name || "Member",
-                        points,
-                        numberOfTransaction,
-                        amountSpent
-                    });
-                }
-            }
-
-            const currentYear = nowWIB.getUTCFullYear();
-            const currentMonth = nowWIB.getUTCMonth();
-            const activeDateWIB = new Date(Date.UTC(currentYear, currentMonth, 1, 0, 0, 0) - wibOffset);
-            const lastDayOfCurrentMonth = new Date(Date.UTC(currentYear, currentMonth + 1, 0)).getUTCDate();
-            const expireDateWIB = new Date(Date.UTC(currentYear, currentMonth, lastDayOfCurrentMonth, 16, 59, 59));
-
-            const activeDate = Timestamp.fromDate(activeDateWIB);
-            const expireDate = Timestamp.fromDate(expireDateWIB);
-
-            const prizes = [50000, 25000, 15000];
-            const batch = db.batch();
-            for (const [category, participants] of categoriesMap.entries()) {
-                participants.sort((a, b) => {
-                    if (b.points !== a.points) return b.points - a.points;
-                    if (b.numberOfTransaction !== a.numberOfTransaction)
-                        return b.numberOfTransaction - a.numberOfTransaction;
-                    return b.amountSpent - a.amountSpent;
-                });
-                participants.slice(0, 3).forEach((winner, index) => {
-                    const newVoucherRef = db.collection("vouchers").doc();
-                    
-                    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-                    let shortVoucherId = "";
-                    for (let i = 0; i < 4; i++) {
-                        shortVoucherId += chars.charAt(Math.floor(Math.random() * chars.length));
-                    }
-
-                    batch.set(newVoucherRef, {
-                        userId: winner.id,
-                        nama: winner.name,
-                        Nama: winner.name,
-                        userName: winner.name,
-                        type: "competitionReward",
-                        value: prizes[index],
-                        status: "READY_TO_CLAIM",
-                        transactionRequirement: 10000,
-                        activeDate: activeDate,
-                        expireDate: expireDate,
-                        createdAt: FieldValue.serverTimestamp(),
-                        lastUpdatedAt: FieldValue.serverTimestamp(),
-                        voucherName: `Juara ${index + 1} ${category} - ${prevMonthStr}`,
-                        voucherId: shortVoucherId,
-                    });
-                });
-            }
-            await batch.commit();
-        } catch (e) { logger.error(e); }
+        logger.info("Monthly rewards are finalized transactionally by the POS; scheduled legacy issuer skipped.");
     }
 );
 
@@ -253,11 +177,11 @@ async function sendPushToMember(eventPath: string, memberId: string, title: stri
 }
 
 // SHARED LOGIC for onPointsUpdated
-async function onPointsUpdatedLogic(event: any) {
+async function onPointsUpdatedLogic(event: UpdatedTriggerEvent) {
     const memberId = event.params.memberId;
     const beforeData = event.data?.before.data();
     const afterData = event.data?.after.data();
-    if (!beforeData || !afterData) return;
+    if (!memberId || !beforeData || !afterData) return;
     const oldPoints = beforeData.points ?? 0;
     const newPoints = afterData.points ?? 0;
     const pointsAdded = newPoints - oldPoints;
@@ -268,7 +192,7 @@ async function onPointsUpdatedLogic(event: any) {
     ]);
 
     const redeemableVouchers: { name: string; value: number }[] = [];
-    const addVoucher = (doc: admin.firestore.QueryDocumentSnapshot) => {
+    const addVoucher = (doc: QueryDocumentSnapshot<DocumentData>) => {
         const d = doc.data();
         const expireDate = d.expireDate?.toDate?.();
         if (expireDate && expireDate < new Date()) return;
@@ -291,7 +215,7 @@ export const onPointsUpdated = onDocumentUpdated({ document: "Members/{memberId}
 export const onPointsUpdatedTesting = onDocumentUpdated({ document: "zTesting_Members/{memberId}", region: "us-central1" }, onPointsUpdatedLogic);
 
 // SHARED LOGIC for onVoucherGroupAchieved
-async function onVoucherGroupAchievedLogic(event: any) {
+async function onVoucherGroupAchievedLogic(event: CreatedTriggerEvent) {
     const data = event.data?.data();
     if (!data || !data.userId || !data.voucherGroupId || data.status !== "READY_TO_CLAIM") return;
     const body = `Selamat! Anda berhasil meraih voucher "${data.voucherName}"! 🎊`;
@@ -301,36 +225,33 @@ async function onVoucherGroupAchievedLogic(event: any) {
 export const onVoucherGroupAchieved = onDocumentCreated({ document: "vouchers/{voucherId}", region: "us-central1" }, onVoucherGroupAchievedLogic);
 export const onVoucherGroupAchievedTesting = onDocumentCreated({ document: "zTesting_vouchers/{voucherId}", region: "us-central1" }, onVoucherGroupAchievedLogic);
 
+// Campaign vouchers are normally created as IN_PROGRESS and later transition
+// to READY_TO_CLAIM inside the POS checkout transaction.  Notify that
+// transition without writing any campaign or points state from Functions.
+async function onVoucherGroupUpdatedLogic(event: UpdatedTriggerEvent) {
+    const before = event.data?.before.data();
+    const after = event.data?.after.data();
+    if (!before || !after || !after.userId || !after.voucherGroupId) return;
+    const beforeStatus = String(before.status ?? "").toUpperCase();
+    const afterStatus = String(after.status ?? "").toUpperCase();
+    if (beforeStatus === "READY_TO_CLAIM" || afterStatus !== "READY_TO_CLAIM") return;
+    const body = `Selamat! Anda berhasil meraih voucher "${after.voucherName ?? "Voucher"}"! 🎊`;
+    await sendPushToMember(event.document, String(after.userId), "Voucher Baru! 🎁", body, { type: "voucher_achieved" });
+}
+
+export const onVoucherGroupUpdated = onDocumentUpdated({ document: "vouchers/{voucherId}", region: "us-central1" }, onVoucherGroupUpdatedLogic);
+export const onVoucherGroupUpdatedTesting = onDocumentUpdated({ document: "zTesting_vouchers/{voucherId}", region: "us-central1" }, onVoucherGroupUpdatedLogic);
+
 // SHARED LOGIC for onTransactionStatusCreated
-async function onTransactionStatusCreatedLogic(event: any) {
-    const data = event.data?.data();
-    if (!data || !data.isMember || !data.memberId) return;
-
-    const total = data.total || 0;
-    const subTotal = data.subTotal || 0;
-    const takeAwayFee = data.takeAwayFee || 0;
-
-    let pointsAdded = 0;
-    if (data.paymentMethod === "Program" && data.voucherProgramId) {
-        const nominal = data.programNominal || 0;
-        pointsAdded = Math.floor(Math.max(0, total - nominal) / 10000);
-    } else {
-        pointsAdded = Math.floor(total / 10000);
-    }
-
-    await db.collection(getCol("pointTransactions", event.document)).add({
-        memberId: data.memberId,
-        transactionId: event.params.statusId || event.params.orderId,
-        total: total,
-        subTotal: subTotal,
-        takeAwayFee: takeAwayFee,
-        pointsAdded: pointsAdded,
-        orderItems: data.orderItems || [],
-        paymentMethod: data.paymentMethod || "Pembayaran",
-        timestamp: data.waktuPesan || admin.firestore.FieldValue.serverTimestamp(),
-        sourcePath: event.document,
-        voucherProgramId: data.voucherProgramId || null,
-        programNominal: data.programNominal || 0,
+//
+// The POS now writes pointTransactions/{operationId}, competition member
+// records, and campaign progress in the same transaction as the sale.  A
+// status-trigger projection here would award points a second time, so these
+// legacy triggers are deliberately inert.  Keeping the exports avoids a
+// breaking function deletion during deployment.
+async function onTransactionStatusCreatedLogic(event: CreatedTriggerEvent) {
+    logger.debug("Legacy transaction-created point projection skipped", {
+        document: event.document,
     });
 }
 
@@ -339,71 +260,12 @@ export const onTransactionStatusCreatedTesting = onDocumentCreated({ document: "
 export const onSelfOrderCreatedTesting = onDocumentCreated({ document: "zTesting_SelfOrders/{statusId}", region: "us-central1" }, onTransactionStatusCreatedLogic);
 
 // SHARED LOGIC for onTransactionStatusUpdated
-async function onTransactionStatusUpdatedLogic(event: any) {
-    const change = event.data;
-    if (!change) return;
-    const beforeData = change.before.data();
-    const afterData = change.after.data();
-    if (!afterData) return;
-
-    if (!afterData.isMember || !afterData.memberId) return;
-
-    const memberId = afterData.memberId;
-    const transactionId = event.params.statusId || event.params.orderId;
-
-    const total = afterData.total || 0;
-    const subTotal = afterData.subTotal || 0;
-    const takeAwayFee = afterData.takeAwayFee || 0;
-
-    let pointsAdded = 0;
-    if (afterData.paymentMethod === "Program" && afterData.voucherProgramId) {
-        const nominal = afterData.programNominal || 0;
-        pointsAdded = Math.floor(Math.max(0, total - nominal) / 10000);
-    } else {
-        pointsAdded = Math.floor(total / 10000);
-    }
-
-    const colName = getCol("pointTransactions", event.document);
-    const querySnapshot = await db.collection(colName)
-        .where("memberId", "==", memberId)
-        .where("transactionId", "==", transactionId)
-        .limit(1)
-        .get();
-
-    if (!querySnapshot.empty) {
-        const docRef = querySnapshot.docs[0].ref;
-        await docRef.update({
-            total: total,
-            subTotal: subTotal,
-            takeAwayFee: takeAwayFee,
-            pointsAdded: pointsAdded,
-            orderItems: afterData.orderItems || [],
-            paymentMethod: afterData.paymentMethod || "Pembayaran",
-            timestamp: afterData.waktuPesan || beforeData?.waktuPesan || admin.firestore.FieldValue.serverTimestamp(),
-            voucherProgramId: afterData.voucherProgramId || null,
-            programNominal: afterData.programNominal || 0,
-        });
-    } else {
-        await db.collection(colName).add({
-            memberId: memberId,
-            transactionId: transactionId,
-            total: total,
-            subTotal: subTotal,
-            takeAwayFee: takeAwayFee,
-            pointsAdded: pointsAdded,
-            orderItems: afterData.orderItems || [],
-            paymentMethod: afterData.paymentMethod || "Pembayaran",
-            timestamp: afterData.waktuPesan || admin.firestore.FieldValue.serverTimestamp(),
-            sourcePath: event.document,
-            voucherProgramId: afterData.voucherProgramId || null,
-            programNominal: afterData.programNominal || 0,
-        });
-    }
+async function onTransactionStatusUpdatedLogic(event: UpdatedTriggerEvent) {
+    logger.debug("Legacy transaction-updated point projection skipped", {
+        document: event.document,
+    });
 }
 
 export const onTransactionStatusUpdated = onDocumentUpdated({ document: "{path=**}/Status/{statusId}", region: "us-central1" }, onTransactionStatusUpdatedLogic);
 export const onTransactionStatusUpdatedTesting = onDocumentUpdated({ document: "zTesting_Status/{statusId}", region: "us-central1" }, onTransactionStatusUpdatedLogic);
 export const onSelfOrderUpdatedTesting = onDocumentUpdated({ document: "zTesting_SelfOrders/{statusId}", region: "us-central1" }, onTransactionStatusUpdatedLogic);
-
-
-

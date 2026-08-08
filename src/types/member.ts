@@ -7,10 +7,11 @@ export interface Member {
     gender: string;
     dateOfBirth: string;
     email: string;
-    category: Category;
+    // Legacy profiles contain several spellings; normalize only when ranking.
+    category: Category | string;
     role: "member" | "admin"; // RBAC via Custom Claims
     points: number;
-    createdAt: any;
+    createdAt: unknown;
     // Santri fields
     unitEducation?: string;
     asrama?: string;
@@ -31,6 +32,8 @@ export interface CompetitionRecord {
     numberOfTransaction: number;
     memberName: string;
     memberId: string;
+    category?: string;
+    schemaVersion?: number;
 }
 
 export interface Feedback {
@@ -38,6 +41,6 @@ export interface Feedback {
     memberId: string;
     memberName: string;
     content: string;
-    timestamp: any;
+    timestamp: unknown;
     status: string;
 }

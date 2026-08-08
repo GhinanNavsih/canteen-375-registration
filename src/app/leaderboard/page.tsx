@@ -5,10 +5,20 @@ import Link from "next/link";
 import { useMember } from "@/context/MemberContext";
 import Navbar from "@/components/Navbar";
 import { db } from "@/lib/firebase";
-import { query, where, onSnapshot } from "firebase/firestore";
+import { getDoc, onSnapshot } from "firebase/firestore";
 import { doc, collection } from "@/lib/firebase";
 import { CompetitionRecord, Member, Category } from "@/types/member";
 import { VoucherGroup } from "@/types/voucher";
+import {
+  categoryMatches,
+  competitionCategoryLabel,
+  competitionRecordFromData,
+  isActiveCashbackCampaign,
+  jakartaPeriod,
+  normalizeCompetitionCategory,
+  parseProgramNumber,
+  sortCompetitionRecords,
+} from "@/lib/memberProgram";
 
 /** Track which members just received points and which moved up in rank */
 interface AnimationState {
@@ -24,6 +34,7 @@ export default function LeaderboardPage() {
   const [selectedCategory, setSelectedCategory] = useState<Category>("Mahasiswa");
   const [loading, setLoading] = useState(true);
   const [activePrograms, setActivePrograms] = useState<VoucherGroup[]>([]);
+  const [finalizedWinners, setFinalizedWinners] = useState<Record<string, { rank: number; prizeAmount: number }>>({});
   const [animations, setAnimations] = useState<AnimationState>({
     pointBump: new Set(),
     rankUp: new Set(),
@@ -35,29 +46,35 @@ export default function LeaderboardPage() {
   const prevRankMapRef = useRef<Map<string, number>>(new Map());
   const isFirstLoadRef = useRef(true);
 
-  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7)); // yyyy-mm
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  const currentMonth = jakartaPeriod();
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth); // yyyy-mm
 
   // Generate list of months for history (starting from April 2026)
   const historyMonths: string[] = [];
-  const startMonth = new Date("2026-04-01");
-  let tempDate = new Date();
-  tempDate.setDate(1);
+  const [currentYear, currentMonthNumber] = currentMonth.split("-").map(Number);
+  let monthCursor = new Date(Date.UTC(currentYear, currentMonthNumber - 1, 1));
+  const startMonth = new Date(Date.UTC(2026, 3, 1));
 
-  while (tempDate >= startMonth) {
-    historyMonths.push(tempDate.toISOString().slice(0, 7));
-    tempDate.setMonth(tempDate.getMonth() - 1);
+  while (monthCursor >= startMonth) {
+    historyMonths.push(
+      `${monthCursor.getUTCFullYear()}-${String(monthCursor.getUTCMonth() + 1).padStart(2, "0")}`
+    );
+    monthCursor = new Date(Date.UTC(monthCursor.getUTCFullYear(), monthCursor.getUTCMonth() - 1, 1));
   }
 
   useEffect(() => {
-    if (member?.category) {
-      setSelectedCategory(member.category);
+    const category = normalizeCompetitionCategory(member?.category);
+    if (category) {
+      setSelectedCategory(competitionCategoryLabel(category) as Category);
     }
   }, [member?.category]);
 
   // ─── Real-time listeners for Members + CompetitionRecords ───
   useEffect(() => {
-    if (sessionLoading) return;
+    if (sessionLoading || !member) {
+      setLoading(false);
+      return;
+    }
 
     setLoading(true);
     isFirstLoadRef.current = true;
@@ -77,29 +94,42 @@ export default function LeaderboardPage() {
       }
     );
 
-    // Listener 2: Competition records document for the selected month
+    // New POS writes one canonical record per member under the month.
+    // Keep a one-time legacy fallback so older months remain readable.
+    let legacyFallbackAllowed = true;
     const unsubCompetition = onSnapshot(
-      doc(db, "competitionRecords", selectedMonth),
+      collection(db, `competitionRecords/${selectedMonth}/members`),
       (snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          const parsed: CompetitionRecord[] = [];
-
-          Object.entries(data).forEach(([memberId, stats]: [string, any]) => {
-            parsed.push({
-              memberId,
-              memberName: "", // will be resolved at render time from `members`
-              amountSpent: stats.amountSpent || 0,
-              points: stats.customerPoints || 0,
-              numberOfTransaction: stats.numberOfTransaction || 0,
-            });
-          });
-
-          setRecords(parsed);
-        } else {
-          setRecords([]);
+        if (snap.docs.length > 0) {
+          legacyFallbackAllowed = false;
+          setRecords(
+            sortCompetitionRecords(
+              snap.docs.map((entry) =>
+                competitionRecordFromData(entry.id, entry.data() as Record<string, unknown>)
+              )
+            )
+          );
+          setLoading(false);
+          return;
         }
-        setLoading(false);
+
+        getDoc(doc(db, "competitionRecords", selectedMonth))
+          .then((legacySnap) => {
+            if (!legacyFallbackAllowed) return;
+            if (!legacySnap.exists()) {
+              setRecords([]);
+              return;
+            }
+            const legacyData = legacySnap.data() as Record<string, unknown>;
+            const legacyRecords = Object.entries(legacyData)
+              .filter(([, value]) => value && typeof value === "object")
+              .map(([memberId, value]) =>
+                competitionRecordFromData(memberId, value as Record<string, unknown>)
+              );
+            setRecords(sortCompetitionRecords(legacyRecords));
+          })
+          .catch((error) => console.error("Legacy competition fallback error:", error))
+          .finally(() => setLoading(false));
       },
       (err) => {
         console.error("CompetitionRecords listener error:", err);
@@ -110,24 +140,45 @@ export default function LeaderboardPage() {
     return () => {
       unsubMembers();
       unsubCompetition();
+      legacyFallbackAllowed = false;
     };
-  }, [sessionLoading, selectedMonth]);
+  }, [sessionLoading, member, selectedMonth]);
+
+  useEffect(() => {
+    if (sessionLoading || !member) return;
+    const unsubscribe = onSnapshot(
+      collection(db, `competitionPrizes/${selectedMonth}/winners`),
+      (snap) => {
+        const winners: Record<string, { rank: number; prizeAmount: number }> = {};
+        snap.forEach((entry) => {
+          const data = entry.data() as Record<string, unknown>;
+          const winnerId = String(data.memberId ?? "").trim();
+          if (!winnerId) return;
+          winners[winnerId] = {
+            rank: parseProgramNumber(data.rank),
+            prizeAmount: parseProgramNumber(data.prizeAmount ?? data.value),
+          };
+        });
+        setFinalizedWinners(winners);
+      },
+      (error) => {
+        console.error("Competition prize listener:", error);
+        setFinalizedWinners({});
+      }
+    );
+    return () => unsubscribe();
+  }, [sessionLoading, member, selectedMonth]);
 
   // Active voucher campaigns (already real-time)
   useEffect(() => {
-    const q = query(collection(db, "voucherGroup"), where("isActive", "==", true));
+    if (sessionLoading || !member) return;
     const unsub = onSnapshot(
-      q,
+      collection(db, "voucherGroup"),
       (snap) => {
         const now = new Date();
         const active = snap.docs
           .map(d => ({ id: d.id, ...d.data() } as VoucherGroup))
-          .filter(prog => {
-            if (prog.expireDate) {
-              return prog.expireDate.toDate() > now;
-            }
-            return true;
-          });
+          .filter((prog) => isActiveCashbackCampaign(prog, now));
         setActivePrograms(active);
       },
       (err) => {
@@ -136,7 +187,7 @@ export default function LeaderboardPage() {
       }
     );
     return () => unsub();
-  }, []);
+  }, [sessionLoading, member]);
 
   // ─── Detect point bumps & rank changes ───
   const detectAnimations = useCallback(
@@ -196,7 +247,7 @@ export default function LeaderboardPage() {
   );
 
   // ─── Derived: filter + sort ───
-  const filteredRecords = records
+  const filteredRecords = sortCompetitionRecords(records
     .map((r) => ({
       ...r,
       memberName:
@@ -204,16 +255,8 @@ export default function LeaderboardPage() {
     }))
     .filter((r) => {
       const m = members[r.memberId];
-      if (selectedCategory === "Guru/Dosen/Staff") {
-        return (m?.category as string) === "Guru/Dosen/Staff" || (m?.category as string) === "Guru/Dosen";
-      }
-      return m?.category === selectedCategory;
-    })
-    .sort((a, b) => {
-      if (b.points !== a.points) return b.points - a.points;
-      if (b.numberOfTransaction !== a.numberOfTransaction) return b.numberOfTransaction - a.numberOfTransaction;
-      return b.amountSpent - a.amountSpent;
-    });
+      return categoryMatches(m?.category || r.category, selectedCategory);
+    }));
 
   // Trigger animation detection whenever filteredRecords changes
   useEffect(() => {
@@ -263,7 +306,7 @@ export default function LeaderboardPage() {
                   <div key={prog.id} className="announcement-program-row">
                     <div className="announcement-program-main">
                       <span className="announcement-program-name">{prog.voucherName}</span>
-                      <span className="announcement-program-value shine-blink-periodic">Rp{(prog.value || 0).toLocaleString("id-ID")}</span>
+                      <span className="announcement-program-value shine-blink-periodic">Rp{parseProgramNumber(prog.value).toLocaleString("id-ID")}</span>
                     </div>
                     {(prog.threshold ?? 0) > 0 && (
                       <div className="announcement-points-needed">
@@ -278,7 +321,7 @@ export default function LeaderboardPage() {
                       )}
                       {prog.expireDate && (
                         <span className="announcement-expire">
-                          s.d. {prog.expireDate.toDate().toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })}
+                          s.d. {new Date(prog.expireDate.toDate()).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })}
                         </span>
                       )}
                     </div>
@@ -348,9 +391,11 @@ export default function LeaderboardPage() {
                         {!isAdmin && rec.memberId === member?.id && <span className="me-badge">Kamu</span>}
                       </div>
 
-                      {idx === 0 && <span className="prize-badge gold">Rp50.000</span>}
-                      {idx === 1 && <span className="prize-badge silver">Rp25.000</span>}
-                      {idx === 2 && <span className="prize-badge bronze">Rp15.000</span>}
+                      {finalizedWinners[rec.memberId] && (
+                        <span className={`prize-badge ${idx === 0 ? "gold" : idx === 1 ? "silver" : "bronze"}`}>
+                          Rp{finalizedWinners[rec.memberId].prizeAmount.toLocaleString("id-ID")}
+                        </span>
+                      )}
                       <div className="lb-stats">
                         <span className={`pts ${hasPointBump ? "pts-flash" : ""}`}>
                           {rec.points} points
