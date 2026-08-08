@@ -7,40 +7,18 @@ import { collection } from "@/lib/firebase";
 import { db } from "@/lib/firebase";
 import { useMember } from "@/context/MemberContext";
 import Navbar from "@/components/Navbar";
-import { parseProgramNumber, asProgramDate } from "@/lib/memberProgram";
+import {
+  asProgramDate,
+  normalizePointTransaction,
+  parseProgramNumber,
+  pointEventLabel,
+  ProgramOrderItem,
+} from "@/lib/memberProgram";
 
-interface SelectedOption {
-  groupName: string;
-  optionName: string;
-  priceAdjustment?: number;
-}
-
-interface OrderItem {
-  namaPesanan: string;
-  dineInQuantity: number;
-  takeAwayQuantity: number;
-  harga: number;
-  selectedOptions?: SelectedOption[];
-  orderedAt?: number;
-}
-
-interface TransactionHistory {
-  id: string;
-  transactionId: string;
+interface TransactionHistory extends ReturnType<typeof normalizePointTransaction> {
   total: number;
-  subTotal?: number;
-  takeAwayFee?: number;
-  totalAmount?: number; // fallback for legacy records
-  pointsAdded: number;
-  orderItems: OrderItem[];
-  timestamp: unknown;
-  paymentMethod: string;
   voucherProgramId?: string;
   programNominal?: number;
-  b2bNominal?: number;
-  ordinaryVoucherDiscount?: number;
-  eligibleAmount?: number;
-  eventType?: string;
 }
 
 export default function HistoryPage() {
@@ -48,6 +26,7 @@ export default function HistoryPage() {
   const router = useRouter();
   const [history, setHistory] = useState<TransactionHistory[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -58,54 +37,114 @@ export default function HistoryPage() {
 
     if (!member) return;
 
-    const q = query(
+    const memberId = member.id.trim();
+    const ledgerQuery = query(
       collection(db, "pointTransactions"),
-      where("memberId", "==", member.id.trim()),
-      limit(50)
+      // The equality filter is important: the shared rules authorize a
+      // member to read only ledger documents belonging to that member.
+      where("memberId", "==", memberId),
+      limit(200),
+    );
+    const statusQuery = query(
+      collection(db, "Status"),
+      where("memberId", "==", memberId),
+      limit(200),
     );
 
-    // Set up real-time listener
-    const unsubscribe = onSnapshot(
-      q,
+    let ledgerLoaded = false;
+    let ledgerById = new Map<string, Record<string, unknown>>();
+    let statusByKey = new Map<string, Record<string, unknown>>();
+
+    const statusKeys = (id: string, data: Record<string, unknown>): string[] => [
+      id,
+      data.memberProgramOperationId,
+      data.pointsOperationId,
+      data.selfOrderId,
+    ]
+      .map((value) => (typeof value === "string" || typeof value === "number" ? String(value).trim() : ""))
+      .filter(Boolean);
+
+    const publish = () => {
+      if (!ledgerLoaded) return;
+      const fetched: TransactionHistory[] = Array.from(ledgerById.entries()).map(([id, data]) => {
+        const base = normalizePointTransaction(
+          id,
+          data,
+          statusByKey.get(id) ?? statusByKey.get(String(data.operationId ?? "")) ?? statusByKey.get(String(data.sourceId ?? "")),
+        );
+        const statusData = statusByKey.get(id)
+          ?? statusByKey.get(String(data.operationId ?? ""))
+          ?? statusByKey.get(String(data.sourceId ?? ""));
+        return {
+          ...base,
+          total: base.finalBill,
+          voucherProgramId: typeof data.voucherProgramId === "string"
+            ? data.voucherProgramId
+            : typeof statusData?.voucherProgramId === "string"
+              ? statusData.voucherProgramId
+              : undefined,
+          programNominal: parseProgramNumber(
+            data.programNominal
+              ?? data.b2bNominal
+              ?? data.b2bSponsoredNominal
+              ?? statusData?.programNominal
+              ?? statusData?.b2bNominal,
+          ),
+        };
+      });
+
+      fetched.sort((left, right) => {
+        const leftDate = asProgramDate(left.timestamp)?.getTime() ?? 0;
+        const rightDate = asProgramDate(right.timestamp)?.getTime() ?? 0;
+        if (rightDate !== leftDate) return rightDate - leftDate;
+        return right.id.localeCompare(left.id);
+      });
+      setHistory(fetched.slice(0, 50));
+      setLoading(false);
+    };
+
+    const unsubscribeLedger = onSnapshot(
+      ledgerQuery,
       (querySnapshot) => {
-        const fetched: TransactionHistory[] = [];
+        ledgerById = new Map<string, Record<string, unknown>>();
         querySnapshot.forEach((doc) => {
-          const data = doc.data();
-          fetched.push({
-            id: doc.id,
-            transactionId: data.transactionId || data.sourceId || doc.id,
-            total: parseProgramNumber(data.total ?? data.finalBill ?? data.grossTotal),
-            subTotal: parseProgramNumber(data.subTotal ?? data.finalBill ?? data.grossTotal),
-            takeAwayFee: parseProgramNumber(data.takeAwayFee),
-            totalAmount: parseProgramNumber(data.totalAmount ?? data.finalBill ?? data.grossTotal),
-            pointsAdded: parseProgramNumber(data.pointsAdded ?? data.pointsDelta),
-            orderItems: Array.isArray(data.orderItems) ? data.orderItems as OrderItem[] : [],
-            timestamp: data.timestamp ?? data.eventAt ?? data.createdAt,
-            paymentMethod: data.paymentMethod || data.sourceType || "Pembayaran",
-            voucherProgramId: data.voucherProgramId,
-            programNominal: parseProgramNumber(data.programNominal ?? data.b2bNominal),
-            b2bNominal: parseProgramNumber(data.b2bNominal),
-            ordinaryVoucherDiscount: parseProgramNumber(data.ordinaryVoucherDiscount),
-            eligibleAmount: parseProgramNumber(data.eligibleAmount),
-            eventType: data.eventType,
-          });
+          ledgerById.set(doc.id, doc.data() as Record<string, unknown>);
         });
-        fetched.sort((left, right) => {
-          const leftDate = asProgramDate(left.timestamp)?.getTime() ?? 0;
-          const rightDate = asProgramDate(right.timestamp)?.getTime() ?? 0;
-          return rightDate - leftDate;
-        });
-        setHistory(fetched.slice(0, 20));
-        setLoading(false);
+        ledgerLoaded = true;
+        setError(null);
+        publish();
       },
       (error) => {
         console.error("Error listening to history:", error);
+        setError("Riwayat poin tidak dapat dimuat. Periksa koneksi dan izin akun Anda.");
         setLoading(false);
       }
     );
 
-    // Cleanup listener on unmount
-    return () => unsubscribe();
+    const unsubscribeStatus = onSnapshot(
+      statusQuery,
+      (querySnapshot) => {
+        statusByKey = new Map<string, Record<string, unknown>>();
+        querySnapshot.forEach((statusDoc) => {
+          const data = statusDoc.data() as Record<string, unknown>;
+          for (const key of statusKeys(statusDoc.id, data)) {
+            statusByKey.set(key, data);
+          }
+        });
+        publish();
+      },
+      (statusError) => {
+        // Status is enrichment only.  A permission/index failure must not hide
+        // the authoritative point ledger.
+        console.warn("Order detail enrichment unavailable:", statusError);
+        publish();
+      },
+    );
+
+    return () => {
+      unsubscribeLedger();
+      unsubscribeStatus();
+    };
   }, [member, sessionLoading, router]);
 
   const toggleExpand = (id: string) => {
@@ -117,6 +156,7 @@ export default function HistoryPage() {
     const date = asProgramDate(ts);
     if (!date) return ts ? "Waktu tidak valid" : "Waktu tidak diketahui";
     return date.toLocaleDateString("id-ID", {
+      timeZone: "Asia/Jakarta",
       day: "numeric", month: "long", year: "numeric",
       hour: "2-digit", minute: "2-digit"
     });
@@ -144,6 +184,12 @@ export default function HistoryPage() {
               <div className="loader-small"></div>
               <p>Memuat riwayat...</p>
             </div>
+          ) : error ? (
+            <div className="state-card">
+              <div className="empty-icon">⚠️</div>
+              <h3>Riwayat Tidak Dapat Dimuat</h3>
+              <p>{error}</p>
+            </div>
           ) : history.length === 0 ? (
             <div className="state-card">
               <div className="empty-icon">🧾</div>
@@ -155,7 +201,10 @@ export default function HistoryPage() {
             <div className="history-list">
               {history.map((tx) => {
                 const isExpanded = expandedId === tx.id;
-                const totalItemsCount = tx.orderItems?.reduce((sum, item) => sum + (item.dineInQuantity || 0) + (item.takeAwayQuantity || 0), 0) || 0;
+                const totalItemsCount = tx.orderItems.reduce(
+                  (sum, item) => sum + item.dineInQuantity + item.takeAwayQuantity,
+                  0,
+                );
                 
                 return (
                   <div key={tx.id} className={`history-card ${isExpanded ? 'expanded' : ''}`}>
@@ -164,13 +213,13 @@ export default function HistoryPage() {
                         <div className="hc-icon">🍱</div>
                         <div className="hc-info">
                           <span className="hc-date">{formatDate(tx.timestamp)}</span>
-                          <span className="hc-summary">{tx.eventType === "reverse" ? "Koreksi poin" : `${totalItemsCount} item • ${tx.paymentMethod || "Pembayaran"}`}</span>
+                          <span className="hc-summary">{pointEventLabel(tx)} • {totalItemsCount} item • {tx.paymentMethod || "Pembayaran"}</span>
                         </div>
                       </div>
                       <div className="hc-right">
-                        <span className="hc-total">{formatPrice((tx.total ?? tx.totalAmount) || 0)}</span>
-                        {tx.pointsAdded > 0 && (
-                          <span className="hc-points">+{tx.pointsAdded} Poin ⭐</span>
+                        <span className="hc-total">{formatPrice(tx.total)}</span>
+                        {tx.pointsDelta !== 0 && (
+                          <span className="hc-points">{tx.pointsDelta > 0 ? "+" : ""}{tx.pointsDelta} Poin ⭐</span>
                         )}
                       </div>
                     </div>
@@ -180,7 +229,7 @@ export default function HistoryPage() {
                       const uniqueRounds = Array.from(new Set(sortedItems.map(item => item.orderedAt || 0).filter(t => t > 0)));
                       const hasMultipleRounds = uniqueRounds.length > 1;
 
-                      const groups: { orderedAt: number; items: OrderItem[] }[] = [];
+                      const groups: { orderedAt: number; items: ProgramOrderItem[] }[] = [];
                       if (hasMultipleRounds) {
                         sortedItems.forEach(item => {
                           const ts = item.orderedAt || 0;
@@ -204,6 +253,7 @@ export default function HistoryPage() {
                               const showHeader = hasMultipleRounds && group.orderedAt > 0;
                               const timeStr = showHeader
                                 ? new Date(group.orderedAt).toLocaleTimeString("id-ID", {
+                                    timeZone: "Asia/Jakarta",
                                     hour: "2-digit",
                                     minute: "2-digit",
                                   })
@@ -218,11 +268,11 @@ export default function HistoryPage() {
                                   )}
                                   <div className="receipt-group-items">
                                     {group.items.map((item, idx) => {
-                                      const qty = (item.dineInQuantity || 0) + (item.takeAwayQuantity || 0);
+                                      const qty = item.dineInQuantity + item.takeAwayQuantity;
                                       let itemTotal = item.harga;
-                                      if (item.selectedOptions) {
+                                      if (item.selectedOptions.length > 0) {
                                         item.selectedOptions.forEach(opt => {
-                                          itemTotal += opt.priceAdjustment || 0;
+                                          itemTotal += opt.priceAdjustment;
                                         });
                                       }
                                       
@@ -271,24 +321,45 @@ export default function HistoryPage() {
                           <div className="receipt-footer">
                             <div className="r-footer-row">
                               <span>Subtotal</span>
-                              <span>{formatPrice((tx.subTotal ?? (tx.total ?? tx.totalAmount)) || 0)}</span>
+                              <span>{formatPrice(tx.subTotal)}</span>
                             </div>
+                            {tx.ordinaryVoucherDiscount > 0 && (
+                              <div className="r-footer-row">
+                                <span>Potongan voucher biasa</span>
+                                <span>-{formatPrice(tx.ordinaryVoucherDiscount)}</span>
+                              </div>
+                            )}
                             {(tx.takeAwayFee ?? 0) > 0 && (
                               <div className="r-footer-row">
                                 <span>Biaya Take-away</span>
-                                <span>{formatPrice(tx.takeAwayFee || 0)}</span>
+                              <span>{formatPrice(tx.takeAwayFee)}</span>
                               </div>
                             )}
                             <div className="r-footer-row total">
                               <span>Total</span>
-                              <span>{formatPrice((tx.total ?? tx.totalAmount) || 0)}</span>
+                              <span>{formatPrice(tx.total)}</span>
                             </div>
                             <div className="r-points-earned">
-                              ⭐ Anda mendapatkan <strong>{tx.pointsAdded} Poin</strong> dari transaksi ini!
+                              ⭐ {pointEventLabel(tx)}: <strong>{tx.pointsDelta > 0 ? "+" : ""}{tx.pointsDelta} Poin</strong>.
                             </div>
-                            {(tx.paymentMethod === "Program" || (tx.b2bNominal ?? 0) > 0) && (
+                            {(tx.paymentMethod.toLowerCase() === "program" || tx.b2bNominal > 0) && (
                               <div className="voucher-program-points-explanation">
-                                💡 <strong>Program Voucher:</strong> Poin dihitung dari nilai setelah voucher biasa, dikurangi sponsor B2B ({formatPrice(tx.b2bNominal || tx.programNominal || 0)}). Nilai yang menghasilkan poin: {formatPrice(tx.eligibleAmount ?? Math.max(0, (tx.total ?? 0) - (tx.b2bNominal || tx.programNominal || 0)))}.
+                                💡 <strong>Program Voucher:</strong> Poin dihitung dari nilai setelah voucher biasa, dikurangi sponsor B2B ({formatPrice(tx.b2bNominal)}). Nilai yang menghasilkan poin: {formatPrice(tx.eligibleAmount)}.
+                              </div>
+                            )}
+                            {tx.status === "pending" && (
+                              <div className="history-warning">
+                                Poin transaksi ini masih menunggu penyelesaian di kasir.
+                              </div>
+                            )}
+                            {tx.auditFlags.length > 0 && (
+                              <div className="history-warning">
+                                Transaksi memiliki catatan audit dan sedang ditinjau oleh pengelola.
+                              </div>
+                            )}
+                            {tx.orderItems.length === 0 && (
+                              <div className="history-warning">
+                                Rincian menu tidak tersedia pada data transaksi lama.
                               </div>
                             )}
                           </div>
@@ -609,6 +680,16 @@ export default function HistoryPage() {
         }
         .r-points-earned strong {
           color: #f57c00;
+        }
+        .history-warning {
+          margin-top: 0.75rem;
+          background: #fff7ed;
+          border: 1px solid #fed7aa;
+          padding: 0.75rem;
+          border-radius: 8px;
+          font-size: 0.82rem;
+          color: #9a3412;
+          line-height: 1.4;
         }
         .voucher-program-points-explanation {
           margin-top: 0.75rem;

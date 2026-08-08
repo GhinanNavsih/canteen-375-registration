@@ -7,17 +7,15 @@ import { rtdb } from "@/lib/firebase";
 import { useMember } from "@/context/MemberContext";
 
 const LIVE_ORDER_PATH = "/admin/live-order";
-const DEFAULT_PATH = "/admin/menu-display";
 
 /**
  * Watches the POS app's live basket for admins on any page. The moment the
  * cashier starts inputting an order (basket goes empty -> non-empty), this
  * tablet jumps to the live order display so the customer can cross-check.
- * The live order page only ever makes sense while there's something to
- * show, so the reverse also holds: if the basket is empty, that page is
- * never the one selected — either it never navigates there, or if the
- * basket empties out (checkout finished) while already there, it bounces
- * back to the default display.
+ * When the basket empties out again (checkout finished) while already on
+ * that page, the live order page itself owns the transition — it shows a
+ * thank-you/points card first, then navigates back to the default display —
+ * so this watcher only ever pushes *into* the live order page, never out.
  */
 export default function LiveOrderAutoRedirect() {
   const { isAdmin, loading: sessionLoading } = useMember();
@@ -43,8 +41,6 @@ export default function LiveOrderAutoRedirect() {
 
       if (hasItems && !hadItemsRef.current && pathnameRef.current !== LIVE_ORDER_PATH) {
         router.push(LIVE_ORDER_PATH);
-      } else if (!hasItems && pathnameRef.current === LIVE_ORDER_PATH) {
-        router.push(DEFAULT_PATH);
       }
       hadItemsRef.current = hasItems;
     });

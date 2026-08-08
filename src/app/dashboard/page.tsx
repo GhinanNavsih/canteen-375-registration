@@ -17,6 +17,7 @@ import {
   findCampaignVoucher,
   isActiveCashbackCampaign,
   jakartaPeriod,
+  competitionRecordFromData,
   parseProgramNumber,
   sortCompetitionRecords,
   voucherStatusIsVisible,
@@ -62,20 +63,35 @@ export default function DashboardPage() {
     if (member) {
       // Fetch all members once to know categories for ranking
       const fetchMembers = async () => {
-        const snap = await getDocs(collection(db, "Members"));
-        const membersMap: Record<string, Member> = {};
-        snap.forEach(doc => {
-          const tid = doc.id.trim();
-          membersMap[tid] = { ...doc.data(), id: tid } as Member;
-        });
-        setAllMembers(membersMap);
+        try {
+          const snap = await getDocs(collection(db, "Members"));
+          const membersMap: Record<string, Member> = {};
+          snap.forEach(memberDoc => {
+            const tid = memberDoc.id.trim();
+            const data = memberDoc.data();
+            membersMap[tid] = {
+              ...data,
+              id: tid,
+              points: parseProgramNumber(data.points),
+            } as Member;
+          });
+          setAllMembers(membersMap);
+        } catch (error) {
+          console.error("Member category lookup failed:", error);
+          setAllMembers({});
+        }
       };
       fetchMembers();
 
       // Listen for live updates to points
       const unsub = onSnapshot(doc(db, "Members", member.id), (docSnap) => {
         if (docSnap.exists()) {
-          setLiveMember({ id: docSnap.id, ...docSnap.data() } as Member);
+          const data = docSnap.data();
+          setLiveMember({
+            id: docSnap.id,
+            ...data,
+            points: parseProgramNumber(data.points),
+          } as Member);
         }
       });
 
@@ -152,23 +168,23 @@ export default function DashboardPage() {
   }, [member, sessionLoading, isAdmin, router, currentMonth]);
 
   const userRank = useMemo(() => {
-    if (!member || !competitionData || Object.keys(allMembers).length === 0) return null;
+    if (!member || !competitionData) return null;
 
     const targetId = member.id.trim();
-    const targetCategory = liveMember?.category || member.category || "";
+    const ownStats = competitionData[targetId] ?? competitionData[member.id];
+    const ownRecord = ownStats ? competitionRecordFromData(targetId, ownStats) : null;
+    const targetCategory = ownRecord?.category || liveMember?.category || member.category || "";
     const records: CompetitionRecord[] = [];
     Object.entries(competitionData).forEach(([mId, stats]) => {
       const trimmedMId = mId.trim();
       const mInfo = allMembers[trimmedMId];
-      if (mInfo && categoryMatches(mInfo.category, targetCategory)) {
-        records.push({
-          memberId: trimmedMId,
-          memberName: "",
-          points: parseProgramNumber(stats.customerPoints ?? stats.points),
-          amountSpent: parseProgramNumber(stats.amountSpent),
-          numberOfTransaction: parseProgramNumber(stats.numberOfTransaction),
-          category: mInfo.category,
-        });
+      const record = competitionRecordFromData(trimmedMId, stats);
+      // New POS records contain a category snapshot.  It is the source of
+      // truth for that month; only legacy records without a category fall
+      // back to the current member profile.
+      const recordCategory = record.category || mInfo?.category || "";
+      if (categoryMatches(recordCategory, targetCategory)) {
+        records.push({ ...record, category: recordCategory });
       }
     });
 
@@ -215,7 +231,7 @@ export default function DashboardPage() {
     return "🏆";
   };
 
-  const currentPoints = competitionPoints;
+  const currentPoints = parseProgramNumber(liveMember?.points ?? member.points);
 
   return (
     <div className="dashboard-wrapper">
@@ -246,7 +262,10 @@ export default function DashboardPage() {
                     </div>
                   )}
                 </div>
-                <span className="label">Jumlah Points Anda Bulan Ini</span>
+                <span className="label">Total Poin Anda</span>
+                <span className="monthly-points-summary">
+                  Kompetisi bulan ini: {competitionPoints.toLocaleString("id-ID")} poin
+                </span>
               </div>
               <div className="points-icon-large">⭐</div>
             </div>
@@ -357,7 +376,7 @@ export default function DashboardPage() {
 
                         <div className="c-footer-row">
                           <span className={`nudge-text ${diffMs < 86400000 ? 'critical' : diffMs < 604800000 ? 'urgent' : 'normal'}`}>
-                            {expDate && diffMs < 604800000 ? `⏳ ${timerText}` : expDate ? `s.d. ${expDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}` : "Tidak ada batas waktu"}
+                            {expDate && diffMs < 604800000 ? `⏳ ${timerText}` : expDate ? `s.d. ${expDate.toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta', day: 'numeric', month: 'short', year: 'numeric' })}` : "Tidak ada batas waktu"}
                           </span>
                         </div>
 
@@ -532,6 +551,12 @@ export default function DashboardPage() {
           font-size: 0.9rem;
           opacity: 0.9;
           margin-top: 0.2rem;
+        }
+        .monthly-points-summary {
+          display: block;
+          font-size: 0.78rem;
+          opacity: 0.86;
+          margin-top: 0.45rem;
         }
         .points-main-row {
           display: flex;

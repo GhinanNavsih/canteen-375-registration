@@ -10,13 +10,17 @@ import { doc, collection } from "@/lib/firebase";
 import { CompetitionRecord, Member, Category } from "@/types/member";
 import { VoucherGroup } from "@/types/voucher";
 import {
+  asProgramDate,
   categoryMatches,
   competitionCategoryLabel,
+  competitionMonthLabel,
   competitionRecordFromData,
+  isCompetitionMemberRecordData,
   isActiveCashbackCampaign,
   jakartaPeriod,
   normalizeCompetitionCategory,
   parseProgramNumber,
+  recentCompetitionPeriods,
   sortCompetitionRecords,
 } from "@/lib/memberProgram";
 
@@ -33,7 +37,9 @@ export default function LeaderboardPage() {
   const [members, setMembers] = useState<Record<string, Member>>({});
   const [selectedCategory, setSelectedCategory] = useState<Category>("Mahasiswa");
   const [loading, setLoading] = useState(true);
+  const [dataError, setDataError] = useState<string | null>(null);
   const [activePrograms, setActivePrograms] = useState<VoucherGroup[]>([]);
+  const [availablePeriods, setAvailablePeriods] = useState<string[]>([]);
   const [finalizedWinners, setFinalizedWinners] = useState<Record<string, { rank: number; prizeAmount: number }>>({});
   const [animations, setAnimations] = useState<AnimationState>({
     pointBump: new Set(),
@@ -49,18 +55,13 @@ export default function LeaderboardPage() {
   const currentMonth = jakartaPeriod();
   const [selectedMonth, setSelectedMonth] = useState(currentMonth); // yyyy-mm
 
-  // Generate list of months for history (starting from April 2026)
-  const historyMonths: string[] = [];
-  const [currentYear, currentMonthNumber] = currentMonth.split("-").map(Number);
-  let monthCursor = new Date(Date.UTC(currentYear, currentMonthNumber - 1, 1));
-  const startMonth = new Date(Date.UTC(2026, 3, 1));
-
-  while (monthCursor >= startMonth) {
-    historyMonths.push(
-      `${monthCursor.getUTCFullYear()}-${String(monthCursor.getUTCMonth() + 1).padStart(2, "0")}`
-    );
-    monthCursor = new Date(Date.UTC(monthCursor.getUTCFullYear(), monthCursor.getUTCMonth() - 1, 1));
-  }
+  // Keep a useful recent range while also discovering older periods from the
+  // canonical competitionRecords documents.  The old hard-coded start month
+  // silently hid valid historical leaderboards.
+  const historyMonths = Array.from(new Set([
+    ...recentCompetitionPeriods(currentMonth),
+    ...availablePeriods,
+  ])).filter((period) => /^\d{4}-\d{2}$/.test(period)).sort((left, right) => right.localeCompare(left));
 
   useEffect(() => {
     const category = normalizeCompetitionCategory(member?.category);
@@ -77,7 +78,24 @@ export default function LeaderboardPage() {
     }
 
     setLoading(true);
+    setDataError(null);
     isFirstLoadRef.current = true;
+
+    const unsubPeriods = onSnapshot(
+      collection(db, "competitionRecords"),
+      (snap) => {
+        setAvailablePeriods(
+          snap.docs
+            .map((entry) => entry.id.trim())
+            .filter((period) => /^\d{4}-\d{2}$/.test(period)),
+        );
+      },
+      (err) => {
+        console.error("Competition period listener error:", err);
+        // The current period listener below still works when the period index
+        // cannot be listed; retain the generated recent-month options.
+      },
+    );
 
     // Listener 1: Members collection
     const unsubMembers = onSnapshot(
@@ -109,6 +127,7 @@ export default function LeaderboardPage() {
               )
             )
           );
+          setDataError(null);
           setLoading(false);
           return;
         }
@@ -122,22 +141,28 @@ export default function LeaderboardPage() {
             }
             const legacyData = legacySnap.data() as Record<string, unknown>;
             const legacyRecords = Object.entries(legacyData)
-              .filter(([, value]) => value && typeof value === "object")
+              .filter(([, value]) => isCompetitionMemberRecordData(value))
               .map(([memberId, value]) =>
                 competitionRecordFromData(memberId, value as Record<string, unknown>)
               );
             setRecords(sortCompetitionRecords(legacyRecords));
+            setDataError(null);
           })
-          .catch((error) => console.error("Legacy competition fallback error:", error))
+          .catch((error) => {
+            console.error("Legacy competition fallback error:", error);
+            setDataError("Papan peringkat tidak dapat dimuat. Periksa koneksi dan izin akun Anda.");
+          })
           .finally(() => setLoading(false));
       },
       (err) => {
         console.error("CompetitionRecords listener error:", err);
+        setDataError("Papan peringkat tidak dapat dimuat. Periksa koneksi dan izin akun Anda.");
         setLoading(false);
       }
     );
 
     return () => {
+      unsubPeriods();
       unsubMembers();
       unsubCompetition();
       legacyFallbackAllowed = false;
@@ -255,7 +280,11 @@ export default function LeaderboardPage() {
     }))
     .filter((r) => {
       const m = members[r.memberId];
-      return categoryMatches(m?.category || r.category, selectedCategory);
+      // A canonical record stores the category snapshot used by POS
+      // finalization.  Do not silently move historical spend when a profile
+      // category is edited later; use the profile only for old records that
+      // have no category field at all.
+      return categoryMatches(r.category || m?.category, selectedCategory);
     }));
 
   // Trigger animation detection whenever filteredRecords changes
@@ -266,7 +295,7 @@ export default function LeaderboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [records, members, selectedCategory, loading]);
 
-  const myRank = filteredRecords.findIndex((r) => r.memberId === member?.id) + 1;
+  const myRank = filteredRecords.findIndex((r) => r.memberId === member?.id.trim()) + 1;
 
   const getRankBadge = (rank: number) => {
     if (rank === 1) return "🥇";
@@ -285,7 +314,7 @@ export default function LeaderboardPage() {
       <main className="leaderboard-main">
         <div className="leaderboard-container animate-fade-in">
           <div className="lb-header">
-            <h2>🏆 Leaderboard {new Date().toLocaleString('id-ID', { month: 'long', year: 'numeric' })}</h2>
+            <h2>🏆 Leaderboard {competitionMonthLabel(selectedMonth)}</h2>
             <p>Berkompetisi untuk mendapatkan voucher menarik!</p>
             <div className="live-indicator">
               <span className="live-dot" />
@@ -308,20 +337,25 @@ export default function LeaderboardPage() {
                       <span className="announcement-program-name">{prog.voucherName}</span>
                       <span className="announcement-program-value shine-blink-periodic">Rp{parseProgramNumber(prog.value).toLocaleString("id-ID")}</span>
                     </div>
-                    {(prog.threshold ?? 0) > 0 && (
+                    {parseProgramNumber(prog.threshold) > 0 && (
                       <div className="announcement-points-needed">
                         ⭐ Kumpulkan{" "}
-                        <strong>{(prog.threshold ?? 0).toLocaleString("id-ID")} poin</strong> untuk mendapatkan voucher ini
+                        <strong>{parseProgramNumber(prog.threshold).toLocaleString("id-ID")} poin</strong> untuk mendapatkan voucher ini
                         <br />
                       </div>
                     )}
                     <div className="announcement-program-foot">
                       {prog.totalParticipants != null && (
-                        <span>👥 {prog.totalClaimed || 0}/{prog.totalParticipants} peserta</span>
+                        <span>👥 {parseProgramNumber(prog.totalClaimed)}/{parseProgramNumber(prog.totalParticipants)} peserta</span>
                       )}
                       {prog.expireDate && (
                         <span className="announcement-expire">
-                          s.d. {new Date(prog.expireDate.toDate()).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })}
+                          {(() => {
+                            const expiry = asProgramDate(prog.expireDate);
+                            return expiry
+                              ? `s.d. ${expiry.toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta", day: "numeric", month: "short", year: "numeric" })}`
+                              : "Tanggal berakhir tidak valid";
+                          })()}
                         </span>
                       )}
                     </div>
@@ -352,7 +386,9 @@ export default function LeaderboardPage() {
                 </button>
               )}
             </div>
-            {loading ? (
+            {dataError ? (
+              <div className="lb-empty">{dataError}</div>
+            ) : loading ? (
               <div className="lb-loading">Memuat peringkat...</div>
             ) : filteredRecords.length === 0 ? (
               <div className="lb-empty">Belum ada data untuk kategori ini.</div>
@@ -374,7 +410,7 @@ export default function LeaderboardPage() {
                   return (
                     <div
                       key={rec.memberId}
-                      className={`lb-item ${!isAdmin && rec.memberId === member?.id ? 'is-me' : ''} ${idx === 0 ? 'rank-gold' : idx === 1 ? 'rank-silver' : idx === 2 ? 'rank-bronze' : ''
+                      className={`lb-item ${!isAdmin && rec.memberId === member?.id.trim() ? 'is-me' : ''} ${idx === 0 ? 'rank-gold' : idx === 1 ? 'rank-silver' : idx === 2 ? 'rank-bronze' : ''
                         } ${animClasses}`}
                     >
                       {/* Rank-up arrow indicator */}
@@ -388,7 +424,7 @@ export default function LeaderboardPage() {
                       <div className="lb-rank">{getRankBadge(idx + 1)}</div>
                       <div className="lb-name">
                         <span>{rec.memberName}</span>
-                        {!isAdmin && rec.memberId === member?.id && <span className="me-badge">Kamu</span>}
+                        {!isAdmin && rec.memberId === member?.id.trim() && <span className="me-badge">Kamu</span>}
                       </div>
 
                       {finalizedWinners[rec.memberId] && (

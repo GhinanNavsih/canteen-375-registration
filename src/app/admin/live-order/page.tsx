@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ref, onValue } from "firebase/database";
-import { rtdb } from "@/lib/firebase";
+import { query, orderBy, limit, onSnapshot as onFsSnapshot, getDoc } from "firebase/firestore";
+import { rtdb, db, collection, doc } from "@/lib/firebase";
 import { useMember } from "@/context/MemberContext";
 import { AnimatePresence, motion } from "framer-motion";
+import { asProgramDate, parseProgramNumber } from "@/lib/memberProgram";
+import ThankYouCard, { ThankYouPhase } from "./ThankYouCard";
 
 interface LiveBasketOption {
   group?: string;
@@ -35,6 +38,22 @@ interface LiveBasket {
   updatedAt?: number;
 }
 
+const DEFAULT_PATH = "/admin/menu-display";
+// How long to look for a matching pointTransactions entry before giving up on a member match.
+const SEARCH_TIMEOUT_MS = 2500;
+// How close (ms) a pointTransactions write must be to the basket clearing to count as the same order.
+const MATCH_WINDOW_MS = 90_000;
+const HOLD_AFTER_GENERIC_MS = 3200;
+const HOLD_AFTER_MATCH_MS = 4800;
+
+interface ThankYouState {
+  phase: ThankYouPhase | "hidden";
+  memberName?: string;
+  pointsBefore?: number;
+  pointsAfter?: number;
+  pointsAdded?: number;
+}
+
 export default function LiveOrderDisplayPage() {
   const { isAdmin, loading: sessionLoading } = useMember();
   const router = useRouter();
@@ -42,6 +61,137 @@ export default function LiveOrderDisplayPage() {
   const [basket, setBasket] = useState<LiveBasket | null>(null);
   const [connecting, setConnecting] = useState(true);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [thankYou, setThankYou] = useState<ThankYouState>({ phase: "hidden" });
+
+  const hadItemsRef = useRef(false);
+  const lastBasketRef = useRef<LiveBasket | null>(null);
+  const thankYouActiveRef = useRef(false);
+  const resolvedRef = useRef(false);
+  const unsubscribeSearchRef = useRef<(() => void) | null>(null);
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearThankYouTimers = () => {
+    if (unsubscribeSearchRef.current) {
+      unsubscribeSearchRef.current();
+      unsubscribeSearchRef.current = null;
+    }
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+      searchTimeoutRef.current = null;
+    }
+    if (holdTimeoutRef.current) {
+      clearTimeout(holdTimeoutRef.current);
+      holdTimeoutRef.current = null;
+    }
+  };
+
+  const cancelThankYou = () => {
+    clearThankYouTimers();
+    thankYouActiveRef.current = false;
+    resolvedRef.current = false;
+    setThankYou({ phase: "hidden" });
+  };
+
+  const resolveThankYou = (next: ThankYouState, holdMs: number) => {
+    if (!thankYouActiveRef.current || resolvedRef.current) return;
+    resolvedRef.current = true;
+    if (unsubscribeSearchRef.current) {
+      unsubscribeSearchRef.current();
+      unsubscribeSearchRef.current = null;
+    }
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+      searchTimeoutRef.current = null;
+    }
+    setThankYou(next);
+    holdTimeoutRef.current = setTimeout(() => {
+      thankYouActiveRef.current = false;
+      resolvedRef.current = false;
+      setThankYou({ phase: "hidden" });
+      router.push(DEFAULT_PATH);
+    }, holdMs);
+  };
+
+  // Order just completed (basket went from having items to empty) — look for a matching
+  // points-earning transaction so we can show a real before/after points celebration.
+  const beginThankYou = (prevBasket: LiveBasket | null) => {
+    thankYouActiveRef.current = true;
+    resolvedRef.current = false;
+    setThankYou({ phase: "searching" });
+
+    const total = prevBasket?.total;
+    const clearedAt = Date.now();
+
+    const handleSnapshot = async (docs: Array<{ id: string; data: () => Record<string, unknown> }>) => {
+      if (resolvedRef.current) return;
+
+      // The authoritative POS ledger uses pointsDelta/finalBill/eventAt and
+      // is completed inside the sale transaction.  Keep legacy field fallbacks
+      // for older records, but never celebrate a pending/reverse entry.
+      let best: { data: Record<string, unknown>; timeDiff: number } | null = null;
+
+      for (const docSnap of docs) {
+        const data = docSnap.data();
+
+        const memberId = String(data.memberId ?? "").trim();
+        if (!memberId) continue;
+
+        const status = String(data.status ?? "completed").toLowerCase();
+        const eventType = String(data.eventType ?? "earn").toLowerCase();
+        if (status !== "completed" || eventType !== "earn") continue;
+
+        const pointsAdded = parseProgramNumber(data.pointsAdded ?? data.pointsDelta);
+        if (pointsAdded <= 0) continue;
+
+        if (typeof total === "number") {
+          const txTotal = parseProgramNumber(data.total ?? data.finalBill ?? data.grossTotal, Number.NaN);
+          if (!Number.isNaN(txTotal) && txTotal !== total) continue;
+        }
+
+        const txTime = asProgramDate(data.timestamp ?? data.eventAt ?? data.createdAt)?.getTime();
+        const timeDiff = txTime ? Math.abs(txTime - clearedAt) : MATCH_WINDOW_MS;
+        if (timeDiff > MATCH_WINDOW_MS) continue;
+
+        if (!best || timeDiff < best.timeDiff) {
+          best = { data, timeDiff };
+        }
+      }
+
+      if (!best) return;
+
+      const memberId = String(best.data.memberId ?? "").trim();
+      const pointsAdded = parseProgramNumber(best.data.pointsAdded ?? best.data.pointsDelta);
+
+      try {
+        const memberSnap = await getDoc(doc(db, "Members", memberId));
+        const memberData = memberSnap.data();
+        const pointsAfter = parseProgramNumber(memberData?.points, pointsAdded);
+        resolveThankYou(
+          {
+            phase: "matched",
+            memberName: typeof memberData?.fullName === "string" ? memberData.fullName : undefined,
+            pointsAdded,
+            pointsAfter,
+            pointsBefore: pointsAfter - pointsAdded,
+          },
+          HOLD_AFTER_MATCH_MS
+        );
+      } catch (err) {
+        console.error("[LiveOrderDisplay] failed to load member for thank-you card:", err);
+        resolveThankYou({ phase: "generic" }, HOLD_AFTER_GENERIC_MS);
+      }
+    };
+
+    const recentQuery = query(collection(db, "pointTransactions"), orderBy("eventAt", "desc"), limit(15));
+    unsubscribeSearchRef.current = onFsSnapshot(recentQuery, (snapshot) => {
+      void handleSnapshot(snapshot.docs);
+    });
+
+    searchTimeoutRef.current = setTimeout(() => {
+      resolveThankYou({ phase: "generic" }, HOLD_AFTER_GENERIC_MS);
+    }, SEARCH_TIMEOUT_MS);
+  };
 
   // Guard — this is a cashier-counter display, admin-only.
   useEffect(() => {
@@ -64,6 +214,20 @@ export default function LiveOrderDisplayPage() {
         setConnectionError(null);
         const data = snapshot.val() as LiveBasket | null;
         setBasket(data);
+
+        const itemCount = data?.itemCount ?? 0;
+        const hasItems = itemCount > 0;
+
+        if (hasItems) {
+          lastBasketRef.current = data;
+          if (thankYouActiveRef.current) {
+            // A new order started while the thank-you card was still showing — get out of its way.
+            cancelThankYou();
+          }
+        } else if (hadItemsRef.current) {
+          beginThankYou(lastBasketRef.current);
+        }
+        hadItemsRef.current = hasItems;
       },
       (error) => {
         setConnecting(false);
@@ -72,8 +236,12 @@ export default function LiveOrderDisplayPage() {
       }
     );
 
-    return () => unsubscribe();
-  }, [isAdmin, sessionLoading]);
+    return () => {
+      unsubscribe();
+      clearThankYouTimers();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, sessionLoading, router]);
 
   const formatPrice = (price: number) => `Rp${(price || 0).toLocaleString("id-ID")}`;
 
@@ -354,6 +522,15 @@ export default function LiveOrderDisplayPage() {
                 <div className="lod-empty-text">Tidak bisa terhubung ke pesanan langsung</div>
                 <div className="lod-empty-sub">{connectionError}</div>
               </motion.div>
+            ) : thankYou.phase !== "hidden" ? (
+              <ThankYouCard
+                key="thankyou"
+                phase={thankYou.phase}
+                memberName={thankYou.memberName}
+                pointsBefore={thankYou.pointsBefore}
+                pointsAfter={thankYou.pointsAfter}
+                pointsAdded={thankYou.pointsAdded}
+              />
             ) : !hasItems ? (
               <motion.div
                 key="empty"

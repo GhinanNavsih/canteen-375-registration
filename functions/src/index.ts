@@ -28,6 +28,23 @@ const getCol = (name: string, eventPath: string) => {
 const VOUCHER_COLLECTION = "vouchers";
 const VOUCHER_VALUE = 10000;
 
+function parsePointNumber(value: unknown, fallback = 0): number {
+    if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
+    if (typeof value !== "string") return fallback;
+    const raw = value.trim();
+    if (!raw) return fallback;
+    if (/^-?\d+$/.test(raw)) {
+        const direct = Number(raw);
+        if (Number.isFinite(direct)) return Math.trunc(direct);
+    }
+    const negative = raw.startsWith("-");
+    const digits = raw.replace(/[^0-9]/g, "");
+    if (!digits) return fallback;
+    const parsed = Number(digits);
+    if (!Number.isFinite(parsed)) return fallback;
+    return negative ? -Math.trunc(parsed) : Math.trunc(parsed);
+}
+
 // ── FUNCTION 0: Set Admin Role via Custom Claim ──────────────────────────────
 export const setAdminRole = onCall(
     { region: "us-central1" },
@@ -182,8 +199,8 @@ async function onPointsUpdatedLogic(event: UpdatedTriggerEvent) {
     const beforeData = event.data?.before.data();
     const afterData = event.data?.after.data();
     if (!memberId || !beforeData || !afterData) return;
-    const oldPoints = beforeData.points ?? 0;
-    const newPoints = afterData.points ?? 0;
+    const oldPoints = parsePointNumber(beforeData.points);
+    const newPoints = parsePointNumber(afterData.points);
     const pointsAdded = newPoints - oldPoints;
     if (pointsAdded <= 0) return;
     const [vouchersSnap, vouchersSingularSnap] = await Promise.all([

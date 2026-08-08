@@ -8,6 +8,7 @@ import { doc } from "@/lib/firebase";
 import { auth, db } from '@/lib/firebase';
 import { Member } from '@/types/member';
 import { userIsAdminFromToken } from '@/lib/adminAuth';
+import { parseProgramNumber } from '@/lib/memberProgram';
 
 interface MemberContextType {
     member: Member | null;       // null for admins (they have no member profile)
@@ -73,7 +74,15 @@ export function MemberProvider({ children }: { children: React.ReactNode }) {
                         }
                         if (memberSnap.exists()) {
                             console.log("[MemberContext] Member profile found");
-                            setMember({ ...memberSnap.data(), id: memberSnap.id } as Member);
+                            const profile = memberSnap.data();
+                            setMember({
+                                ...profile,
+                                id: memberSnap.id,
+                                // POS materializes lifetime points on Members.
+                                // Normalize legacy numeric strings at the boundary
+                                // so every screen uses the same count.
+                                points: parseProgramNumber(profile.points),
+                            } as Member);
                         } else {
                             console.warn('[MemberContext] No Firestore profile for UID:', user.uid);
                             setMember(null);
