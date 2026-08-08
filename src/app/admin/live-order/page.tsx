@@ -21,6 +21,8 @@ interface LiveBasketItem {
   unitPrice: number;
   subtotal: number;
   note?: string | null;
+  imagePath?: string;
+  isMakanan?: boolean;
   options?: LiveBasketOption[];
 }
 
@@ -94,6 +96,12 @@ export default function LiveOrderDisplayPage() {
 
   const items = basket?.items ?? [];
   const hasItems = items.length > 0;
+  const foodItems = items.filter((item) => item.isMakanan !== false);
+  const drinkItems = items.filter((item) => item.isMakanan === false);
+  const sections = [
+    { label: "🍽️ Makanan", items: foodItems },
+    { label: "🥤 Minuman", items: drinkItems },
+  ].filter((section) => section.items.length > 0);
 
   return (
     <>
@@ -202,12 +210,29 @@ export default function LiveOrderDisplayPage() {
           display: flex;
           flex-direction: column;
         }
+        .lod-section-label {
+          padding: 1.1rem 1.75rem 0.5rem;
+          font-size: 0.75rem;
+          font-weight: 800;
+          letter-spacing: 0.1em;
+          text-transform: uppercase;
+          color: #8d6e63;
+          background: #faf9f7;
+        }
         .lod-item {
           display: flex;
           justify-content: space-between;
           gap: 1rem;
           padding: 1.25rem 1.75rem;
           border-bottom: 1px solid #f0ede9;
+        }
+        .lod-item-img {
+          width: 60px;
+          height: 60px;
+          border-radius: 14px;
+          object-fit: cover;
+          background: #f5dcc3;
+          flex-shrink: 0;
         }
         .lod-item-main {
           display: flex;
@@ -344,46 +369,59 @@ export default function LiveOrderDisplayPage() {
             ) : (
               <motion.div key="items" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                 <div className="lod-items">
-                  <AnimatePresence initial={false}>
-                    {items.map((item, idx) => (
-                      <motion.div
-                        key={`${item.name}-${idx}`}
-                        className="lod-item"
-                        layout
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        exit={{ opacity: 0, height: 0 }}
-                        transition={{ duration: 0.2 }}
-                      >
-                        <div className="lod-item-main">
-                          <div className="lod-item-name-row">
-                            <span className="lod-item-qty">{item.quantity}×</span>
-                            <span className="lod-item-name">{item.name}</span>
-                          </div>
-                          <div className="lod-item-badges">
-                            {!!item.dineInQuantity && (
-                              <span className="lod-badge">Dine In × {item.dineInQuantity}</span>
-                            )}
-                            {!!item.takeAwayQuantity && (
-                              <span className="lod-badge">Take Away × {item.takeAwayQuantity}</span>
-                            )}
-                          </div>
-                          {!!item.options?.length && (
-                            <div className="lod-item-options">
-                              {item.options
-                                .map((opt) => opt.option || opt.group)
-                                .filter(Boolean)
-                                .join(", ")}
+                  {sections.map((section) => (
+                    <div key={section.label}>
+                      <div className="lod-section-label">{section.label}</div>
+                      <AnimatePresence initial={false}>
+                        {section.items.map((item, idx) => (
+                          <motion.div
+                            key={`${item.name}-${idx}`}
+                            className="lod-item"
+                            layout
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: "auto" }}
+                            exit={{ opacity: 0, height: 0 }}
+                            transition={{ duration: 0.2 }}
+                          >
+                            <img
+                              className="lod-item-img"
+                              src={item.imagePath || "/Logo Canteen 375 (2).png"}
+                              alt={item.name}
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).src = "/Logo Canteen 375 (2).png";
+                              }}
+                            />
+                            <div className="lod-item-main">
+                              <div className="lod-item-name-row">
+                                <span className="lod-item-qty">{item.quantity}×</span>
+                                <span className="lod-item-name">{item.name}</span>
+                              </div>
+                              <div className="lod-item-badges">
+                                {!!item.dineInQuantity && (
+                                  <span className="lod-badge">Dine In × {item.dineInQuantity}</span>
+                                )}
+                                {!!item.takeAwayQuantity && (
+                                  <span className="lod-badge">Take Away × {item.takeAwayQuantity}</span>
+                                )}
+                              </div>
+                              {!!item.options?.length && (
+                                <div className="lod-item-options">
+                                  {item.options
+                                    .map((opt) => opt.option || opt.group)
+                                    .filter(Boolean)
+                                    .join(", ")}
+                                </div>
+                              )}
+                              {!!item.note && (
+                                <div className="lod-item-note">&ldquo;{item.note}&rdquo;</div>
+                              )}
                             </div>
-                          )}
-                          {!!item.note && (
-                            <div className="lod-item-note">&ldquo;{item.note}&rdquo;</div>
-                          )}
-                        </div>
-                        <div className="lod-item-price">{formatPrice(item.subtotal)}</div>
-                      </motion.div>
-                    ))}
-                  </AnimatePresence>
+                            <div className="lod-item-price">{formatPrice(item.subtotal)}</div>
+                          </motion.div>
+                        ))}
+                      </AnimatePresence>
+                    </div>
+                  ))}
                 </div>
 
                 <div className="lod-summary">

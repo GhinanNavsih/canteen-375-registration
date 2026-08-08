@@ -21,6 +21,7 @@ import { MemberProvider } from "@/context/MemberContext";
 import { BasketProvider } from "@/context/BasketContext";
 import StyledJsxRegistry from "./registry";
 import ServiceWorkerRegistrar from "@/components/ServiceWorkerRegistrar";
+import LiveOrderAutoRedirect from "@/components/LiveOrderAutoRedirect";
 
 export default function RootLayout({
   children,
@@ -38,6 +39,7 @@ export default function RootLayout({
             <BasketProvider>
               {children}
               <ServiceWorkerRegistrar />
+              <LiveOrderAutoRedirect />
             </BasketProvider>
           </MemberProvider>
         </StyledJsxRegistry>
