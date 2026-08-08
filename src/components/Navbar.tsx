@@ -50,6 +50,9 @@ export default function Navbar() {
                 <Link href="/admin/menu-display" className={`nav-link ${isActive("/admin/menu-display") ? "active" : ""}`}>
                   📺 Menu Display
                 </Link>
+                <Link href="/admin/live-order" className={`nav-link ${isActive("/admin/live-order") ? "active" : ""}`}>
+                  🧾 Live Order
+                </Link>
                 <Link href="/leaderboard" className={`nav-link ${isActive("/leaderboard") ? "active" : ""}`}>
                   🏆 Leaderboard
                 </Link>
