@@ -115,7 +115,7 @@ export default function LiveOrderDisplayPage() {
           display: flex;
           flex-direction: column;
           align-items: center;
-          padding: 2.5rem 2rem 2rem;
+          padding: 2rem 1.5rem;
         }
 
         .lod-header {
@@ -177,7 +177,6 @@ export default function LiveOrderDisplayPage() {
 
         .lod-card {
           width: 100%;
-          max-width: 620px;
           background: #ffffff;
           border-radius: 24px;
           box-shadow: 0 20px 40px -20px rgba(45, 36, 29, 0.15);
@@ -211,8 +210,8 @@ export default function LiveOrderDisplayPage() {
           flex-direction: column;
         }
         .lod-section-label {
-          padding: 1.1rem 1.75rem 0.5rem;
-          font-size: 0.75rem;
+          padding: 1.5rem 2.5rem 0.75rem;
+          font-size: 1rem;
           font-weight: 800;
           letter-spacing: 0.1em;
           text-transform: uppercase;
@@ -221,15 +220,16 @@ export default function LiveOrderDisplayPage() {
         }
         .lod-item {
           display: flex;
+          align-items: center;
           justify-content: space-between;
-          gap: 1rem;
-          padding: 1.25rem 1.75rem;
+          gap: 1.75rem;
+          padding: 1.5rem 2.5rem;
           border-bottom: 1px solid #f0ede9;
         }
         .lod-item-img {
-          width: 60px;
-          height: 60px;
-          border-radius: 14px;
+          width: 160px;
+          height: 160px;
+          border-radius: 24px;
           object-fit: cover;
           background: #f5dcc3;
           flex-shrink: 0;
@@ -237,67 +237,67 @@ export default function LiveOrderDisplayPage() {
         .lod-item-main {
           display: flex;
           flex-direction: column;
-          gap: 0.35rem;
+          gap: 0.5rem;
           flex: 1;
         }
         .lod-item-name-row {
           display: flex;
           align-items: baseline;
-          gap: 0.6rem;
+          gap: 0.75rem;
         }
         .lod-item-qty {
           font-family: 'Playfair Display', serif;
           font-weight: 900;
-          font-size: 1.1rem;
+          font-size: 1.7rem;
           color: #C51720;
-          min-width: 1.6rem;
+          min-width: 2.1rem;
         }
         .lod-item-name {
-          font-size: 1.15rem;
+          font-size: 1.6rem;
           font-weight: 800;
           color: #2d241d;
         }
         .lod-item-badges {
           display: flex;
-          gap: 0.4rem;
+          gap: 0.5rem;
           flex-wrap: wrap;
         }
         .lod-badge {
-          font-size: 0.7rem;
+          font-size: 0.9rem;
           font-weight: 700;
-          padding: 0.15rem 0.55rem;
+          padding: 0.25rem 0.75rem;
           border-radius: 999px;
           background: #f5efe8;
           color: #8d6e63;
         }
         .lod-item-options {
-          font-size: 0.85rem;
+          font-size: 1.05rem;
           color: #8d6e63;
           line-height: 1.5;
         }
         .lod-item-note {
-          font-size: 0.85rem;
+          font-size: 1.05rem;
           color: #a0917e;
           font-style: italic;
         }
         .lod-item-price {
-          font-size: 1.05rem;
+          font-size: 1.5rem;
           font-weight: 800;
           color: #2d241d;
           white-space: nowrap;
         }
 
         .lod-summary {
-          padding: 1.5rem 1.75rem;
+          padding: 2rem 2.5rem;
           background: #faf9f7;
           display: flex;
           flex-direction: column;
-          gap: 0.6rem;
+          gap: 0.75rem;
         }
         .lod-summary-row {
           display: flex;
           justify-content: space-between;
-          font-size: 0.95rem;
+          font-size: 1.15rem;
           color: #8d6e63;
           font-weight: 600;
         }
@@ -305,19 +305,19 @@ export default function LiveOrderDisplayPage() {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          padding-top: 0.75rem;
+          padding-top: 1rem;
           margin-top: 0.25rem;
           border-top: 1.5px solid #ece8e3;
         }
         .lod-summary-total-label {
           font-family: 'Playfair Display', serif;
-          font-size: 1.3rem;
+          font-size: 1.75rem;
           font-weight: 800;
           color: #2d241d;
         }
         .lod-summary-total-value {
           font-family: 'Playfair Display', serif;
-          font-size: 1.6rem;
+          font-size: 2.25rem;
           font-weight: 900;
           color: #C51720;
         }
