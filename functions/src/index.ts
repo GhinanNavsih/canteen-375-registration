@@ -150,17 +150,10 @@ export const onMemberCreated = onDocumentCreated({ document: "Members/{memberId}
 export const onMemberCreatedTesting = onDocumentCreated({ document: "zTesting_Members/{memberId}", region: "us-central1" }, onMemberCreatedLogic);
 
 // FUNCTION 3: Monthly Reward Distribution
-//
-// Monthly competition finalization is owned by the POS
-// MemberProgramService.  This scheduled function intentionally remains
-// deployed as a no-op for backwards-compatible function names: issuing a
-// reward here would race the POS transaction and create duplicate prizes.
-export const distributeMonthlyRewards = onSchedule(
-    { schedule: "0 0 1 * *", timeZone: "Asia/Jakarta", region: "us-central1" },
-    async () => {
-        logger.info("Monthly rewards are finalized transactionally by the POS; scheduled legacy issuer skipped.");
-    }
-);
+// Keep this function ID aligned with the POS codebase. Both deployments use
+// the same deterministic, root-first finalizer so deploying either codebase
+// cannot silently restore the former no-op scheduler.
+export { distributeMonthlyRewards } from "./competitionRewards";
 
 // FUNCTION 4: Expired Voucher Cleanup
 export const expiredVoucherCleanup = onSchedule(

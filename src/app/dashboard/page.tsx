@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useMember } from "@/context/MemberContext";
 import Navbar from "@/components/Navbar";
 import { db } from "@/lib/firebase";
-import { getDoc, getDocs, onSnapshot, query, where, serverTimestamp, setDoc } from "firebase/firestore";
+import { getDocs, onSnapshot, query, where, serverTimestamp, setDoc } from "firebase/firestore";
 import { doc, collection } from "@/lib/firebase";
 import { CompetitionRecord, Member } from "@/types/member";
 import { VoucherGroup, Voucher } from "@/types/voucher";
@@ -18,6 +18,8 @@ import {
   isActiveCashbackCampaign,
   jakartaPeriod,
   competitionRecordFromData,
+  isCompetitionMemberRecordData,
+  mergeCompetitionRecords,
   parseProgramNumber,
   sortCompetitionRecords,
   voucherStatusIsVisible,
@@ -95,39 +97,86 @@ export default function DashboardPage() {
         }
       });
 
-      // New POS writes canonical monthly member documents.  A legacy fallback
-      // keeps older months readable without recreating the old write path.
-      let competitionFallbackActive = true;
-      const unsubCompetition = onSnapshot(
+      // The root monthly document remains the cumulative source for the
+      // active month.  The nested members collection was introduced during
+      // the schema rollout and can contain only post-migration increments.
+      // Read both in real time, preserving the root totals for overlapping
+      // members and retaining nested-only members.
+      let legacyStats: CompetitionStats = {};
+      let canonicalStats: CompetitionStats = {};
+      let legacyLoaded = false;
+      let canonicalLoaded = false;
+      let active = true;
+
+      const publishCompetitionData = () => {
+        if (!active || !legacyLoaded || !canonicalLoaded) return;
+
+        const toRecords = (stats: CompetitionStats): CompetitionRecord[] =>
+          Object.entries(stats)
+            .filter(([, value]) => isCompetitionMemberRecordData(value))
+            .map(([memberId, value]) =>
+              competitionRecordFromData(memberId, value as Record<string, unknown>)
+            );
+
+        const mergedRecords = mergeCompetitionRecords(
+          toRecords(legacyStats),
+          toRecords(canonicalStats),
+        );
+        const mergedData: CompetitionStats = {};
+        mergedRecords.forEach((record) => {
+          mergedData[record.memberId] = {
+            memberName: record.memberName,
+            amountSpent: record.amountSpent,
+            customerPoints: record.points,
+            numberOfTransaction: record.numberOfTransaction,
+            category: record.category,
+            schemaVersion: record.schemaVersion,
+          };
+        });
+
+        setCompetitionData(Object.keys(mergedData).length > 0 ? mergedData : null);
+        const targetId = member.id.trim();
+        const ownStats = Object.entries(mergedData).find(
+          ([memberId]) => memberId.trim() === targetId,
+        )?.[1];
+        setCompetitionPoints(
+          parseProgramNumber(ownStats?.customerPoints ?? ownStats?.points),
+        );
+      };
+
+      const unsubLegacyCompetition = onSnapshot(
+        doc(db, "competitionRecords", currentMonth),
+        (snap) => {
+          legacyStats = snap.exists()
+            ? (snap.data() as CompetitionStats)
+            : {};
+          legacyLoaded = true;
+          publishCompetitionData();
+        },
+        (error) => {
+          console.error("Legacy competition listener error:", error);
+          legacyStats = {};
+          legacyLoaded = true;
+          publishCompetitionData();
+        },
+      );
+
+      const unsubCanonicalCompetition = onSnapshot(
         collection(db, `competitionRecords/${currentMonth}/members`),
         (snap) => {
-          const records: CompetitionStats = {};
+          canonicalStats = {};
           snap.forEach((entry) => {
-            records[entry.id] = entry.data();
+            canonicalStats[entry.id] = entry.data();
           });
-          if (snap.docs.length > 0) {
-            competitionFallbackActive = false;
-            setCompetitionData(records);
-            setCompetitionPoints(
-              parseProgramNumber(records[member.id.trim()]?.customerPoints ?? records[member.id.trim()]?.points)
-            );
-            return;
-          }
-
-          if (!competitionFallbackActive) return;
-          getDoc(doc(db, "competitionRecords", currentMonth)).then((legacySnap) => {
-            if (!legacySnap.exists()) {
-              setCompetitionData(null);
-              setCompetitionPoints(0);
-              return;
-            }
-            const legacy = legacySnap.data() as CompetitionStats;
-            setCompetitionData(legacy);
-            const userStats = legacy[member.id.trim()] ?? legacy[member.id];
-            setCompetitionPoints(parseProgramNumber(userStats?.customerPoints ?? userStats?.points));
-          }).catch((error) => console.error("Competition fallback error:", error));
+          canonicalLoaded = true;
+          publishCompetitionData();
         },
-        (error) => console.error("Competition listener error:", error)
+        (error) => {
+          console.error("Canonical competition listener error:", error);
+          canonicalStats = {};
+          canonicalLoaded = true;
+          publishCompetitionData();
+        },
       );
 
       // Fetch only valid active cashback campaigns.  Filtering client-side
@@ -159,9 +208,10 @@ export default function DashboardPage() {
 
       return () => {
         unsub();
-        unsubCompetition();
+        active = false;
+        unsubLegacyCompetition();
+        unsubCanonicalCompetition();
         unsubGroups();
-        competitionFallbackActive = false;
         unsubVouchers.forEach(fn => fn());
       };
     }
