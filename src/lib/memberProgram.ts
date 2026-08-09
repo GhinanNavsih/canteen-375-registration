@@ -416,13 +416,50 @@ export function findCampaignVoucher(vouchers: Voucher[], groupId: string): Vouch
 export function competitionRecordFromData(memberId: string, data: Record<string, unknown>): CompetitionRecord {
   return {
     memberId: memberId.trim(),
-    memberName: "",
+    memberName: String(data.memberName ?? data.displayName ?? data.name ?? "").trim(),
     amountSpent: parseProgramNumber(data.amountSpent),
     points: parseProgramNumber(data.customerPoints ?? data.points),
     numberOfTransaction: parseProgramNumber(data.numberOfTransaction),
     category: String(data.category ?? data.memberCategory ?? ""),
     schemaVersion: parseProgramNumber(data.schemaVersion),
   };
+}
+
+/**
+ * Combines the legacy monthly map with the canonical member subcollection.
+ *
+ * During the schema rollout, canonical records may contain only transactions
+ * written after migration while the legacy monthly map still contains the
+ * complete cumulative total.  Keep the legacy aggregate for overlapping
+ * members, enrich it with canonical metadata, and retain canonical-only
+ * members when a legacy key could not be materialized.
+ */
+export function mergeCompetitionRecords(
+  legacyRecords: CompetitionRecord[],
+  canonicalRecords: CompetitionRecord[],
+): CompetitionRecord[] {
+  const byMemberId = new Map<string, CompetitionRecord>();
+
+  for (const record of legacyRecords) {
+    byMemberId.set(record.memberId, record);
+  }
+
+  for (const record of canonicalRecords) {
+    const existing = byMemberId.get(record.memberId);
+    if (!existing) {
+      byMemberId.set(record.memberId, record);
+      continue;
+    }
+
+    byMemberId.set(record.memberId, {
+      ...existing,
+      memberName: existing.memberName || record.memberName,
+      category: existing.category || record.category,
+      schemaVersion: Math.max(existing.schemaVersion ?? 0, record.schemaVersion ?? 0),
+    });
+  }
+
+  return sortCompetitionRecords(Array.from(byMemberId.values()));
 }
 
 export function sortCompetitionRecords(records: CompetitionRecord[]): CompetitionRecord[] {

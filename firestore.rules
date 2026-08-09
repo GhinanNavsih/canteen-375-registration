@@ -291,11 +291,13 @@ service cloud.firestore {
 
     // ── COMPETITION RECORDS (LEADERBOARD DATA) ────────────────────────────────
     match /competitionRecords/{monthId} {
-      allow read: if isAuthenticated();
+      // Public leaderboard data. Member profiles remain private; these
+      // records contain only aggregate scores and public display snapshots.
+      allow read: if true;
       allow create, update: if isPosOperator();
       allow delete: if false;
       match /members/{memberId} {
-        allow read: if isAuthenticated();
+        allow read: if true;
         allow create, update: if isPosOperator();
         allow delete: if false;
       }
@@ -324,11 +326,11 @@ service cloud.firestore {
     }
 
     match /competitionPrizes/{periodId} {
-      allow read: if isAuthenticated();
+      allow read: if true;
       allow create, update: if isAdmin();
       allow delete: if false;
       match /winners/{winnerId} {
-        allow read: if isAuthenticated();
+        allow read: if true;
         allow create, update: if isAdmin();
         allow delete: if false;
       }
@@ -498,11 +500,11 @@ service cloud.firestore {
     }
 
     match /zTesting_competitionRecords/{id} {
-      allow read: if isAuthenticated();
+      allow read: if true;
       allow create, update: if isPosOperator();
       allow delete: if false;
       match /members/{memberId} {
-        allow read: if isAuthenticated();
+        allow read: if true;
         allow create, update: if isPosOperator();
         allow delete: if false;
       }
@@ -596,11 +598,11 @@ service cloud.firestore {
     }
 
     match /zTesting_competitionPrizes/{periodId} {
-      allow read: if isAuthenticated();
+      allow read: if true;
       allow create, update: if isAdmin();
       allow delete: if false;
       match /winners/{winnerId} {
-        allow read: if isAuthenticated();
+        allow read: if true;
         allow create, update: if isAdmin();
         allow delete: if false;
       }

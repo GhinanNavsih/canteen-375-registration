@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useMember } from "@/context/MemberContext";
 import Navbar from "@/components/Navbar";
 import { db } from "@/lib/firebase";
-import { getDoc, onSnapshot } from "firebase/firestore";
+import { onSnapshot } from "firebase/firestore";
 import { doc, collection } from "@/lib/firebase";
 import { CompetitionRecord, Member, Category } from "@/types/member";
 import { VoucherGroup } from "@/types/voucher";
@@ -15,6 +15,7 @@ import {
   competitionCategoryLabel,
   competitionMonthLabel,
   competitionRecordFromData,
+  mergeCompetitionRecords,
   isCompetitionMemberRecordData,
   isActiveCashbackCampaign,
   jakartaPeriod,
@@ -32,7 +33,7 @@ interface AnimationState {
 }
 
 export default function LeaderboardPage() {
-  const { member, isAdmin, loading: sessionLoading } = useMember();
+  const { member, firebaseUser, isAdmin, loading: sessionLoading } = useMember();
   const [records, setRecords] = useState<CompetitionRecord[]>([]);
   const [members, setMembers] = useState<Record<string, Member>>({});
   const [selectedCategory, setSelectedCategory] = useState<Category>("Mahasiswa");
@@ -72,13 +73,17 @@ export default function LeaderboardPage() {
 
   // ─── Real-time listeners for Members + CompetitionRecords ───
   useEffect(() => {
-    if (sessionLoading || !member) {
+    // Competition records are intentionally public leaderboard data.  Do not
+    // gate this listener on `member`: guests and admin accounts (which do not
+    // have a member profile) must be able to see the live board as well.
+    if (sessionLoading) {
       setLoading(false);
       return;
     }
 
     setLoading(true);
     setDataError(null);
+    if (!member && !isAdmin) setMembers({});
     isFirstLoadRef.current = true;
 
     const unsubPeriods = onSnapshot(
@@ -97,80 +102,99 @@ export default function LeaderboardPage() {
       },
     );
 
-    // Listener 1: Members collection
-    const unsubMembers = onSnapshot(
-      collection(db, "Members"),
+    // Member profiles are private.  Only authenticated members/admins may
+    // use them to improve names for legacy records.  Guests use the safe
+    // memberName snapshot stored on canonical competition records instead.
+    let unsubMembers = () => {};
+    if (member || isAdmin) {
+      unsubMembers = onSnapshot(
+        collection(db, "Members"),
+        (snap) => {
+          const membersMap: Record<string, Member> = {};
+          snap.forEach((d) => {
+            membersMap[d.id] = { id: d.id, ...d.data() } as Member;
+          });
+          setMembers(membersMap);
+        },
+        (err) => {
+          console.error("Members listener error:", err);
+        }
+      );
+    }
+
+    // Read both schemas in real time.  The canonical subcollection was added
+    // during an active month, so it can be partial while the legacy monthly
+    // map still contains the complete cumulative totals.
+    let legacyRecords: CompetitionRecord[] = [];
+    let canonicalRecords: CompetitionRecord[] = [];
+    let legacyLoaded = false;
+    let canonicalLoaded = false;
+    let legacyError = false;
+    let canonicalError = false;
+
+    const publishCompetitionRecords = () => {
+      if (!legacyLoaded || !canonicalLoaded) return;
+      setRecords(mergeCompetitionRecords(legacyRecords, canonicalRecords));
+      setDataError(
+        legacyError && canonicalError
+          ? "Papan peringkat tidak dapat dimuat. Periksa koneksi dan izin akun Anda."
+          : null,
+      );
+      setLoading(false);
+    };
+
+    const unsubLegacyCompetition = onSnapshot(
+      doc(db, "competitionRecords", selectedMonth),
       (snap) => {
-        const membersMap: Record<string, Member> = {};
-        snap.forEach((d) => {
-          membersMap[d.id] = { id: d.id, ...d.data() } as Member;
-        });
-        setMembers(membersMap);
+        legacyError = false;
+        const legacyData = snap.exists()
+          ? (snap.data() as Record<string, unknown>)
+          : {};
+        legacyRecords = Object.entries(legacyData)
+          .filter(([, value]) => isCompetitionMemberRecordData(value))
+          .map(([memberId, value]) =>
+            competitionRecordFromData(memberId, value as Record<string, unknown>)
+          );
+        legacyLoaded = true;
+        publishCompetitionRecords();
       },
       (err) => {
-        console.error("Members listener error:", err);
-      }
+        console.error("Legacy competition listener error:", err);
+        legacyError = true;
+        legacyLoaded = true;
+        publishCompetitionRecords();
+      },
     );
 
-    // New POS writes one canonical record per member under the month.
-    // Keep a one-time legacy fallback so older months remain readable.
-    let legacyFallbackAllowed = true;
-    const unsubCompetition = onSnapshot(
+    const unsubCanonicalCompetition = onSnapshot(
       collection(db, `competitionRecords/${selectedMonth}/members`),
       (snap) => {
-        if (snap.docs.length > 0) {
-          legacyFallbackAllowed = false;
-          setRecords(
-            sortCompetitionRecords(
-              snap.docs.map((entry) =>
-                competitionRecordFromData(entry.id, entry.data() as Record<string, unknown>)
-              )
-            )
-          );
-          setDataError(null);
-          setLoading(false);
-          return;
-        }
-
-        getDoc(doc(db, "competitionRecords", selectedMonth))
-          .then((legacySnap) => {
-            if (!legacyFallbackAllowed) return;
-            if (!legacySnap.exists()) {
-              setRecords([]);
-              return;
-            }
-            const legacyData = legacySnap.data() as Record<string, unknown>;
-            const legacyRecords = Object.entries(legacyData)
-              .filter(([, value]) => isCompetitionMemberRecordData(value))
-              .map(([memberId, value]) =>
-                competitionRecordFromData(memberId, value as Record<string, unknown>)
-              );
-            setRecords(sortCompetitionRecords(legacyRecords));
-            setDataError(null);
-          })
-          .catch((error) => {
-            console.error("Legacy competition fallback error:", error);
-            setDataError("Papan peringkat tidak dapat dimuat. Periksa koneksi dan izin akun Anda.");
-          })
-          .finally(() => setLoading(false));
+        canonicalError = false;
+        canonicalRecords = snap.docs.map((entry) =>
+          competitionRecordFromData(entry.id, entry.data() as Record<string, unknown>)
+        );
+        canonicalLoaded = true;
+        publishCompetitionRecords();
       },
       (err) => {
-        console.error("CompetitionRecords listener error:", err);
-        setDataError("Papan peringkat tidak dapat dimuat. Periksa koneksi dan izin akun Anda.");
-        setLoading(false);
+        console.error("Canonical competition listener error:", err);
+        canonicalError = true;
+        canonicalLoaded = true;
+        publishCompetitionRecords();
       }
     );
 
     return () => {
       unsubPeriods();
       unsubMembers();
-      unsubCompetition();
-      legacyFallbackAllowed = false;
+      unsubLegacyCompetition();
+      unsubCanonicalCompetition();
     };
-  }, [sessionLoading, member, selectedMonth]);
+  }, [sessionLoading, member, isAdmin, selectedMonth]);
 
   useEffect(() => {
-    if (sessionLoading || !member) return;
+    // Prize results are also public leaderboard data.
+    if (sessionLoading) return;
     const unsubscribe = onSnapshot(
       collection(db, `competitionPrizes/${selectedMonth}/winners`),
       (snap) => {
@@ -192,7 +216,7 @@ export default function LeaderboardPage() {
       }
     );
     return () => unsubscribe();
-  }, [sessionLoading, member, selectedMonth]);
+  }, [sessionLoading, selectedMonth]);
 
   // Active voucher campaigns (already real-time)
   useEffect(() => {
@@ -276,7 +300,7 @@ export default function LeaderboardPage() {
     .map((r) => ({
       ...r,
       memberName:
-        members[r.memberId]?.fullName || r.memberId.split("_")[0],
+        members[r.memberId]?.fullName || r.memberName || r.memberId.split("_")[0],
     }))
     .filter((r) => {
       const m = members[r.memberId];
@@ -461,7 +485,10 @@ export default function LeaderboardPage() {
             </div>
           )}
 
-          {!loading && !member && (
+          {/* Admins authenticate without a Members profile, so `member` is
+              intentionally null for them.  Show this prompt only to users
+              who are genuinely logged out. */}
+          {!loading && !firebaseUser && !isAdmin && !member && (
             <div className="guest-nudge-summary">
               <p>Daftar atau masuk untuk mulai mengumpulkan poin dan memenangkan reward!</p>
               <Link href="/login?redirect=/leaderboard" className="btn-guest-nudge">
