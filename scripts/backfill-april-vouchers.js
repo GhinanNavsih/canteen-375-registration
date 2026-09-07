@@ -27,6 +27,9 @@ const db = admin.firestore(app);
 
 // ── Config ────────────────────────────────────────────────────────
 const TARGET_MONTH    = "2026-04";          // The competition month
+if (TARGET_MONTH !== "2026-04" || process.argv.some((arg) => /^--(month|period)/.test(arg))) {
+  throw new Error("Legacy-only April repair. Use monthly finalization for 2026-09 onward.");
+}
 const PRIZES          = [25000, 15000, 10000]; // Old prize values for April
 const VOUCHER_COLLECTION = "vouchers";
 

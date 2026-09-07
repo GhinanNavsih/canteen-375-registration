@@ -1,33 +1,10 @@
-/* eslint-disable max-len, require-jsdoc, valid-jsdoc */
 import * as admin from "firebase-admin";
 import type {DocumentData} from "firebase-admin/firestore";
 import {onSchedule} from "firebase-functions/v2/scheduler";
 import {setGlobalOptions} from "firebase-functions/v2";
+import {buildWinners, competitionRankingMode, CompetitionRecord, GLOBAL_COMPETITION_START, GLOBAL_PRIZES, winnerDocumentId} from "./competitionPolicy";
 
 setGlobalOptions({region: "us-central1"});
-
-type CompetitionRecord = {
-  memberId: string;
-  memberName: string;
-  category: string;
-  customerPoints: number;
-  amountSpent: number;
-  numberOfTransaction: number;
-};
-
-type CompetitionWinner = CompetitionRecord & {
-  periodId: string;
-  rank: number;
-  prizeAmount: number;
-  voucherId: string;
-};
-
-const SUPPORTED_CATEGORIES = ["santri", "mahasiswa", "staff_guru_dosen"] as const;
-const PRIZE_AMOUNTS: Record<string, Record<number, number>> = {
-  santri: {1: 50000, 2: 25000, 3: 15000},
-  mahasiswa: {1: 50000, 2: 25000, 3: 15000},
-  staff_guru_dosen: {1: 50000, 2: 25000, 3: 15000},
-};
 
 function parseIntValue(value: unknown, fallback = 0): number {
   if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
@@ -97,7 +74,7 @@ function recordFromData(
  * overlapping member, keep the root totals and use the nested record only to
  * fill metadata. A nested-only member remains visible as a fallback.
  */
-function mergeCompetitionRecords(
+export function mergeCompetitionRecords(
   rootData: DocumentData,
   canonicalDocs: Array<{ id: string; data: () => DocumentData }>,
   profiles: Map<string, Record<string, unknown>>,
@@ -130,21 +107,6 @@ function mergeCompetitionRecords(
   return [...records.values()];
 }
 
-function sortCompetitionRecords(records: CompetitionRecord[]): CompetitionRecord[] {
-  return [...records].sort((left, right) => {
-    if (right.customerPoints !== left.customerPoints) {
-      return right.customerPoints - left.customerPoints;
-    }
-    if (right.amountSpent !== left.amountSpent) {
-      return right.amountSpent - left.amountSpent;
-    }
-    if (right.numberOfTransaction !== left.numberOfTransaction) {
-      return right.numberOfTransaction - left.numberOfTransaction;
-    }
-    return left.memberId < right.memberId ? -1 : left.memberId > right.memberId ? 1 : 0;
-  });
-}
-
 function jakartaYearMonth(date = new Date()): { year: number; month: number } {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Jakarta",
@@ -171,61 +133,7 @@ function followingMonthEnd(periodId: string): Date {
   return new Date(Date.UTC(year, month + 1, 0, 16, 59, 59));
 }
 
-function safeId(value: string): string {
-  const trimmed = value.trim();
-  return trimmed ? trimmed.replace(/[^A-Za-z0-9_-]/g, "_") : "unknown";
-}
-
-function hashId(value: string): string {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619) & 0x7fffffff;
-  }
-  return hash.toString(16);
-}
-
-// Kept byte-for-byte compatible with MemberProgramService.prizeVoucherId so
-// manual and scheduled finalization address the same voucher documents.
-function prizeVoucherId(periodId: string, category: string, rank: number, memberId: string): string {
-  const safePeriod = safeId(periodId);
-  const safeCategory = safeId(category);
-  const safeMember = safeId(memberId);
-  const readable = `competition_${safePeriod}_${safeCategory}_${rank}_${safeMember}`;
-  if (readable.length <= 120 && safePeriod === periodId && safeMember === memberId) {
-    return readable;
-  }
-  return `competition_${hashId(periodId)}_${hashId(category)}_${rank}_${hashId(memberId)}`;
-}
-
-function buildWinners(
-  periodId: string,
-  records: CompetitionRecord[],
-): CompetitionWinner[] {
-  const winners: CompetitionWinner[] = [];
-  for (const category of SUPPORTED_CATEGORIES) {
-    const ranked = sortCompetitionRecords(
-      records.filter(
-        (record) => record.category === category && record.customerPoints > 0,
-      ),
-    );
-    for (let index = 0; index < Math.min(3, ranked.length); index += 1) {
-      const rank = index + 1;
-      const record = ranked[index];
-      const prizeAmount = PRIZE_AMOUNTS[category][rank];
-      winners.push({
-        ...record,
-        periodId,
-        rank,
-        prizeAmount,
-        voucherId: prizeVoucherId(periodId, category, rank, record.memberId),
-      });
-    }
-  }
-  return winners;
-}
-
-async function readCompetitionRecords(
+export async function readCompetitionRecords(
   db: FirebaseFirestore.Firestore,
   periodId: string,
 ): Promise<CompetitionRecord[]> {
@@ -246,11 +154,15 @@ async function readCompetitionRecords(
   );
 }
 
-async function finalizeCompetitionPeriod(
+export async function finalizeCompetitionPeriod(
   db: FirebaseFirestore.Firestore,
   periodId: string,
   actorId: string,
+  now = new Date(),
 ): Promise<number> {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(periodId) || periodId > previousJakartaPeriod(now)) {
+    throw new Error("The Jakarta competition month has not ended or is invalid.");
+  }
   const periodRef = db.collection("competitionRecords").doc(periodId);
   const prizeRef = db.collection("competitionPrizes").doc(periodId);
   const operationId = `finalize_${periodId}`;
@@ -264,6 +176,12 @@ async function finalizeCompetitionPeriod(
     if (status === "finalized" || String(prizeData.status ?? "").toLowerCase() === "finalized") {
       return "already_finalized";
     }
+    // Legacy vouchers often lack structured period metadata. Never reissue an
+    // old month just because it has no competitionPrizes document.
+    if (periodId < GLOBAL_COMPETITION_START || competitionRankingMode(periodId, periodData) !== "global") {
+      return "legacy_reconciliation_required";
+    }
+    if (now >= followingMonthEnd(periodId)) throw new Error("The prize issuance window has ended.");
     const existingOperation = periodData.finalizationOperationId;
     if (
       status === "finalizing" &&
@@ -275,7 +193,9 @@ async function finalizeCompetitionPeriod(
     transaction.set(
       periodRef,
       {
-        schemaVersion: 2,
+        schemaVersion: 3,
+        rankingMode: "global",
+        winnerCount: 3,
         periodId,
         status: "finalizing",
         finalizationOperationId: operationId,
@@ -287,13 +207,16 @@ async function finalizeCompetitionPeriod(
     return "locked";
   });
 
-  if (lockResult === "already_finalized") return 0;
+  if (lockResult !== "locked") {
+    console.log(`Competition ${periodId}: ${lockResult}. No vouchers issued.`);
+    return 0;
+  }
 
   const records = await readCompetitionRecords(db, periodId);
-  const winners = buildWinners(periodId, records);
+  const winners = buildWinners(periodId, records, "global");
   const expiry = followingMonthEnd(periodId);
 
-  await db.runTransaction(async (transaction) => {
+  return db.runTransaction(async (transaction) => {
     const periodSnapshot = await transaction.get(periodRef);
     const prizeSnapshot = await transaction.get(prizeRef);
     const periodData = periodSnapshot.data() ?? {};
@@ -302,17 +225,18 @@ async function finalizeCompetitionPeriod(
       String(periodData.status ?? "").toLowerCase() === "finalized" ||
       String(prizeData.status ?? "").toLowerCase() === "finalized"
     ) {
-      return;
+      return 0;
     }
     if (
       String(periodData.status ?? "").toLowerCase() !== "finalizing" ||
+      periodData.rankingMode !== "global" ||
       periodData.finalizationOperationId !== operationId
     ) {
       throw new Error("The competition finalization lock is invalid or expired.");
     }
 
     const winnerRefs = winners.map((winner) =>
-      prizeRef.collection("winners").doc(`${winner.category}_${winner.rank}`),
+      prizeRef.collection("winners").doc(winnerDocumentId(winner)),
     );
     const voucherRefs = winners.map((winner) =>
       db.collection("vouchers").doc(winner.voucherId),
@@ -329,7 +253,8 @@ async function finalizeCompetitionPeriod(
       if (
         winnerSnapshot.exists &&
         (existingWinner.memberId !== winner.memberId ||
-          parseIntValue(existingWinner.prizeAmount) !== winner.prizeAmount)
+          parseIntValue(existingWinner.prizeAmount) !== winner.prizeAmount ||
+          existingWinner.voucherId !== winner.voucherId || existingWinner.rankingMode !== "global")
       ) {
         throw new Error(`Stored winner data conflicts for ${winner.category} rank ${winner.rank}.`);
       }
@@ -340,6 +265,9 @@ async function finalizeCompetitionPeriod(
         const status = String(existingVoucher.status ?? "").toUpperCase();
         if (
           existingVoucher.competitionPrizePeriod !== winner.periodId ||
+          existingVoucher.rankingMode !== "global" ||
+          parseIntValue(existingVoucher.competitionRank) !== winner.rank ||
+          existingVoucher.type !== "competitionPrize" ||
           existingVoucher.userId !== winner.memberId ||
           parseIntValue(existingVoucher.value) !== winner.prizeAmount
         ) {
@@ -356,7 +284,8 @@ async function finalizeCompetitionPeriod(
       transaction.set(
         winnerRefs[index],
         {
-          schemaVersion: 2,
+          schemaVersion: 3,
+          rankingMode: "global",
           periodId: winner.periodId,
           category: winner.category,
           rank: winner.rank,
@@ -374,7 +303,8 @@ async function finalizeCompetitionPeriod(
         transaction.set(
           voucherRefs[index],
           {
-            schemaVersion: 2,
+            schemaVersion: 3,
+            rankingMode: "global",
             voucherId: winner.voucherId,
             type: "competitionPrize",
             competitionPrizePeriod: winner.periodId,
@@ -392,7 +322,7 @@ async function finalizeCompetitionPeriod(
             activeDate: admin.firestore.Timestamp.now(),
             expireDate: admin.firestore.Timestamp.fromDate(expiry),
             transactionRequirement: 10000,
-            voucherName: `Hadiah Kompetisi ${winner.category} #${winner.rank}`,
+            voucherName: `Hadiah Kompetisi Global #${winner.rank}`,
             issuedByOperationId: operationId,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -406,7 +336,9 @@ async function finalizeCompetitionPeriod(
     transaction.set(
       prizeRef,
       {
-        schemaVersion: 2,
+        schemaVersion: 3,
+        rankingMode: "global",
+        winnerCount: 3,
         periodId,
         status: "finalized",
         finalizationOperationId: operationId,
@@ -414,11 +346,12 @@ async function finalizeCompetitionPeriod(
         finalizedAt: admin.firestore.FieldValue.serverTimestamp(),
         prizeExpiry: admin.firestore.Timestamp.fromDate(expiry),
         configuration: {
-          schemaVersion: 1,
-          amountsByCategory: PRIZE_AMOUNTS,
+          schemaVersion: 2,
+          amountsByRank: GLOBAL_PRIZES,
         },
         winners: winners.map((winner) => ({
-          schemaVersion: 2,
+          schemaVersion: 3,
+          rankingMode: "global",
           periodId: winner.periodId,
           category: winner.category,
           rank: winner.rank,
@@ -437,9 +370,8 @@ async function finalizeCompetitionPeriod(
       finalizedAt: admin.firestore.FieldValue.serverTimestamp(),
       finalizationOperationId: operationId,
     });
+    return winners.length;
   });
-
-  return winners.length;
 }
 
 /**

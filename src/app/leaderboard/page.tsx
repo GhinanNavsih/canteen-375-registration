@@ -11,7 +11,9 @@ import { CompetitionRecord, Member, Category } from "@/types/member";
 import { VoucherGroup } from "@/types/voucher";
 import {
   asProgramDate,
-  categoryMatches,
+  competitionRankingMode,
+  competitionWinnerFromData,
+  type CompetitionPrizeWinner,
   competitionCategoryLabel,
   competitionMonthLabel,
   competitionRecordFromData,
@@ -22,7 +24,7 @@ import {
   normalizeCompetitionCategory,
   parseProgramNumber,
   recentCompetitionPeriods,
-  sortCompetitionRecords,
+  rankCompetitionRecords,
 } from "@/lib/memberProgram";
 
 /** Track which members just received points and which moved up in rank */
@@ -35,13 +37,15 @@ interface AnimationState {
 export default function LeaderboardPage() {
   const { member, firebaseUser, isAdmin, loading: sessionLoading } = useMember();
   const [records, setRecords] = useState<CompetitionRecord[]>([]);
+  const [loadedPeriod, setLoadedPeriod] = useState<string | null>(null);
   const [members, setMembers] = useState<Record<string, Member>>({});
   const [selectedCategory, setSelectedCategory] = useState<Category>("Mahasiswa");
   const [loading, setLoading] = useState(true);
   const [dataError, setDataError] = useState<string | null>(null);
   const [activePrograms, setActivePrograms] = useState<VoucherGroup[]>([]);
   const [availablePeriods, setAvailablePeriods] = useState<string[]>([]);
-  const [finalizedWinners, setFinalizedWinners] = useState<Record<string, { rank: number; prizeAmount: number }>>({});
+  const [finalizedWinners, setFinalizedWinners] = useState<Record<string, CompetitionPrizeWinner>>({});
+  const [periodMetadata, setPeriodMetadata] = useState<{ periodId: string; data: Record<string, unknown> } | null>(null);
   const [animations, setAnimations] = useState<AnimationState>({
     pointBump: new Set(),
     rankUp: new Set(),
@@ -52,9 +56,11 @@ export default function LeaderboardPage() {
   const prevRecordsRef = useRef<CompetitionRecord[]>([]);
   const prevRankMapRef = useRef<Map<string, number>>(new Map());
   const isFirstLoadRef = useRef(true);
+  const animationScopeRef = useRef("");
 
   const currentMonth = jakartaPeriod();
   const [selectedMonth, setSelectedMonth] = useState(currentMonth); // yyyy-mm
+  const rankingMode = competitionRankingMode(selectedMonth, periodMetadata?.periodId === selectedMonth ? periodMetadata.data : {});
 
   // Keep a useful recent range while also discovering older periods from the
   // canonical competitionRecords documents.  The old hard-coded start month
@@ -82,6 +88,7 @@ export default function LeaderboardPage() {
     }
 
     setLoading(true);
+    setRecords([]);
     setDataError(null);
     if (!member && !isAdmin) setMembers({});
     isFirstLoadRef.current = true;
@@ -135,6 +142,7 @@ export default function LeaderboardPage() {
     const publishCompetitionRecords = () => {
       if (!legacyLoaded || !canonicalLoaded) return;
       setRecords(mergeCompetitionRecords(legacyRecords, canonicalRecords));
+      setLoadedPeriod(selectedMonth);
       setDataError(
         legacyError && canonicalError
           ? "Papan peringkat tidak dapat dimuat. Periksa koneksi dan izin akun Anda."
@@ -150,6 +158,7 @@ export default function LeaderboardPage() {
         const legacyData = snap.exists()
           ? (snap.data() as Record<string, unknown>)
           : {};
+        setPeriodMetadata({ periodId: selectedMonth, data: legacyData });
         legacyRecords = Object.entries(legacyData)
           .filter(([, value]) => isCompetitionMemberRecordData(value))
           .map(([memberId, value]) =>
@@ -195,18 +204,15 @@ export default function LeaderboardPage() {
   useEffect(() => {
     // Prize results are also public leaderboard data.
     if (sessionLoading) return;
+    setFinalizedWinners({});
     const unsubscribe = onSnapshot(
       collection(db, `competitionPrizes/${selectedMonth}/winners`),
       (snap) => {
-        const winners: Record<string, { rank: number; prizeAmount: number }> = {};
+        const winners: Record<string, CompetitionPrizeWinner> = {};
         snap.forEach((entry) => {
           const data = entry.data() as Record<string, unknown>;
-          const winnerId = String(data.memberId ?? "").trim();
-          if (!winnerId) return;
-          winners[winnerId] = {
-            rank: parseProgramNumber(data.rank),
-            prizeAmount: parseProgramNumber(data.prizeAmount ?? data.value),
-          };
+          const winner = competitionWinnerFromData(selectedMonth, data);
+          if (winner) winners[winner.memberId] = winner;
         });
         setFinalizedWinners(winners);
       },
@@ -296,30 +302,32 @@ export default function LeaderboardPage() {
   );
 
   // ─── Derived: filter + sort ───
-  const filteredRecords = sortCompetitionRecords(records
+  const filteredRecords = rankCompetitionRecords(records
     .map((r) => ({
       ...r,
       memberName:
         members[r.memberId]?.fullName || r.memberName || r.memberId.split("_")[0],
-    }))
-    .filter((r) => {
-      const m = members[r.memberId];
-      // A canonical record stores the category snapshot used by POS
-      // finalization.  Do not silently move historical spend when a profile
-      // category is edited later; use the profile only for old records that
-      // have no category field at all.
-      return categoryMatches(r.category || m?.category, selectedCategory);
-    }));
+    })), rankingMode, selectedCategory);
+  const unknownHistoricalCategories = rankingMode === "category" && records.some((record) => !normalizeCompetitionCategory(record.category));
 
   // Trigger animation detection whenever filteredRecords changes
   useEffect(() => {
-    if (!loading) {
+    const scope = `${selectedMonth}:${rankingMode}:${rankingMode === "category" ? selectedCategory : ""}`;
+    if (animationScopeRef.current !== scope) {
+      animationScopeRef.current = scope;
+      isFirstLoadRef.current = true;
+      prevRecordsRef.current = [];
+      prevRankMapRef.current = new Map();
+      setAnimations({ pointBump: new Set(), rankUp: new Set(), rankDown: new Set() });
+    }
+    if (!loading && loadedPeriod === selectedMonth) {
       detectAnimations(filteredRecords);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [records, members, selectedCategory, loading]);
+  }, [records, members, selectedCategory, selectedMonth, rankingMode, loading, loadedPeriod]);
 
-  const myRank = filteredRecords.findIndex((r) => r.memberId === member?.id.trim()) + 1;
+  const myRank = loadedPeriod === selectedMonth
+    ? filteredRecords.findIndex((r) => r.memberId === member?.id.trim()) + 1 : 0;
 
   const getRankBadge = (rank: number) => {
     if (rank === 1) return "🥇";
@@ -339,7 +347,7 @@ export default function LeaderboardPage() {
         <div className="leaderboard-container animate-fade-in">
           <div className="lb-header">
             <h2>🏆 Leaderboard {competitionMonthLabel(selectedMonth)}</h2>
-            <p>Berkompetisi untuk mendapatkan voucher menarik!</p>
+            <p>{rankingMode === "global" ? "Satu peringkat untuk semua member. Tiga pemenang: Rp50.000, Rp25.000, dan Rp15.000." : "Arsip kompetisi: tiga pemenang untuk setiap kategori."}</p>
             <div className="live-indicator">
               <span className="live-dot" />
               <span>LIVE</span>
@@ -389,7 +397,7 @@ export default function LeaderboardPage() {
             </aside>
           )}
 
-          <div className="category-tabs">
+          {rankingMode === "category" && <div className="category-tabs">
             {(["Santri", "Mahasiswa", "Guru/Dosen/Staff"] as Category[]).map(cat => (
               <button
                 key={cat}
@@ -399,7 +407,8 @@ export default function LeaderboardPage() {
                 {cat}
               </button>
             ))}
-          </div>
+          </div>}
+          {unknownHistoricalCategories && <p role="note">Sebagian kategori pada arsip ini tidak tercatat. Peserta tersebut tidak ditampilkan dalam peringkat kategori.</p>}
 
           <div className="lb-card">
             <div className="lb-month-indicator">
@@ -412,10 +421,10 @@ export default function LeaderboardPage() {
             </div>
             {dataError ? (
               <div className="lb-empty">{dataError}</div>
-            ) : loading ? (
+            ) : loading || loadedPeriod !== selectedMonth ? (
               <div className="lb-loading">Memuat peringkat...</div>
             ) : filteredRecords.length === 0 ? (
-              <div className="lb-empty">Belum ada data untuk kategori ini.</div>
+              <div className="lb-empty">{rankingMode === "global" ? "Belum ada peserta dengan poin bulan ini." : "Belum ada data untuk kategori ini."}</div>
             ) : (
               <div className="lb-list">
                 {filteredRecords.map((rec, idx) => {
@@ -451,7 +460,7 @@ export default function LeaderboardPage() {
                         {!isAdmin && rec.memberId === member?.id.trim() && <span className="me-badge">Kamu</span>}
                       </div>
 
-                      {finalizedWinners[rec.memberId] && (
+                      {finalizedWinners[rec.memberId]?.rankingMode === rankingMode && (
                         <span className={`prize-badge ${idx === 0 ? "gold" : idx === 1 ? "silver" : "bronze"}`}>
                           Rp{finalizedWinners[rec.memberId].prizeAmount.toLocaleString("id-ID")}
                         </span>

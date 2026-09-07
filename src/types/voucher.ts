@@ -44,6 +44,8 @@ export interface Voucher {
     voucherId?: string;
     voucherName?: string;
     competitionPeriod?: string;
+    competitionPrizePeriod?: string;
+    rankingMode?: "category" | "global";
     competitionCategory?: string;
     competitionRank?: number;
 }

@@ -12,6 +12,7 @@ node_modules/
 
 # testing
 /coverage
+/artifacts/competition-rollout/
 
 # next.js
 /.next/

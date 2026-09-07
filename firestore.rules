@@ -3,6 +3,41 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // BEGIN GLOBAL COMPETITION POLICY
+    function validCompetitionMetadata() {
+      let data = request.resource.data;
+      return (!data.keys().hasAny(["rankingMode"]) || data.rankingMode in ["category", "global"]) &&
+        (!data.keys().hasAny(["winnerCount"]) || (data.winnerCount is int && data.winnerCount >= 0));
+    }
+
+    function validCompetitionPrize(periodId) {
+      let data = request.resource.data;
+      return validCompetitionMetadata() && (periodId < "2026-09" ||
+        (data.rankingMode == "global" && data.winnerCount == 3 &&
+          data.winners is list && data.winners.size() <= 3 &&
+          data.configuration.amountsByRank == {"1": 50000, "2": 25000, "3": 15000}));
+    }
+
+    function validCompetitionWinner(periodId, winnerId) {
+      let data = request.resource.data;
+      return validCompetitionMetadata() && (periodId < "2026-09" ||
+        (data.rankingMode == "global" && data.rank in [1, 2, 3] &&
+          ((data.rank == 1 && winnerId == "rank_1" && data.prizeAmount == 50000) ||
+           (data.rank == 2 && winnerId == "rank_2" && data.prizeAmount == 25000) ||
+           (data.rank == 3 && winnerId == "rank_3" && data.prizeAmount == 15000))));
+    }
+
+    function validCompetitionVoucherCreate() {
+      let data = request.resource.data;
+      return data.get("type", "") != "competitionPrize" ||
+        data.get("competitionPrizePeriod", "") < "2026-09" ||
+        (data.rankingMode == "global" && data.competitionRank in [1, 2, 3] &&
+          data.value == {"1": 50000, "2": 25000, "3": 15000}[
+            data.competitionRank == 1 ? "1" : (data.competitionRank == 2 ? "2" : "3")]);
+    }
+    // END GLOBAL COMPETITION POLICY
+
+
     // ── HELPER FUNCTIONS ──────────────────────────────────────────────────────
 
     function isAuthenticated() {
@@ -238,7 +273,8 @@ service cloud.firestore {
     match /vouchers/{id} {
       allow read: if isAdmin()
                     || (isAuthenticated() && memberIdRefersToAuthUser(resource.data.userId));
-      allow create, update: if isPosOperator();
+      allow create: if isPosOperator() && validCompetitionVoucherCreate();
+      allow update: if isPosOperator();
       allow delete: if false;
     }
 
@@ -294,7 +330,7 @@ service cloud.firestore {
       // Public leaderboard data. Member profiles remain private; these
       // records contain only aggregate scores and public display snapshots.
       allow read: if true;
-      allow create, update: if isPosOperator();
+      allow create, update: if isPosOperator() && validCompetitionMetadata();
       allow delete: if false;
       match /members/{memberId} {
         allow read: if true;
@@ -327,11 +363,11 @@ service cloud.firestore {
 
     match /competitionPrizes/{periodId} {
       allow read: if true;
-      allow create, update: if isAdmin();
+      allow create, update: if isAdmin() && validCompetitionPrize(periodId);
       allow delete: if false;
       match /winners/{winnerId} {
         allow read: if true;
-        allow create, update: if isAdmin();
+        allow create, update: if isAdmin() && validCompetitionWinner(periodId, winnerId);
         allow delete: if false;
       }
     }
@@ -501,7 +537,7 @@ service cloud.firestore {
 
     match /zTesting_competitionRecords/{id} {
       allow read: if true;
-      allow create, update: if isPosOperator();
+      allow create, update: if isPosOperator() && validCompetitionMetadata();
       allow delete: if false;
       match /members/{memberId} {
         allow read: if true;
@@ -519,7 +555,8 @@ service cloud.firestore {
     match /zTesting_vouchers/{id} {
       allow read: if isAdmin() ||
         (isAuthenticated() && memberIdRefersToAuthUser(resource.data.userId));
-      allow create, update: if isPosOperator();
+      allow create: if isPosOperator() && validCompetitionVoucherCreate();
+      allow update: if isPosOperator();
       allow delete: if false;
     }
 
@@ -599,11 +636,11 @@ service cloud.firestore {
 
     match /zTesting_competitionPrizes/{periodId} {
       allow read: if true;
-      allow create, update: if isAdmin();
+      allow create, update: if isAdmin() && validCompetitionPrize(periodId);
       allow delete: if false;
       match /winners/{winnerId} {
         allow read: if true;
-        allow create, update: if isAdmin();
+        allow create, update: if isAdmin() && validCompetitionWinner(periodId, winnerId);
         allow delete: if false;
       }
     }

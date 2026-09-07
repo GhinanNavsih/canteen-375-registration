@@ -6,14 +6,14 @@ import { useRouter } from "next/navigation";
 import { useMember } from "@/context/MemberContext";
 import Navbar from "@/components/Navbar";
 import { db } from "@/lib/firebase";
-import { getDocs, onSnapshot, query, where, serverTimestamp, setDoc } from "firebase/firestore";
+import { onSnapshot, query, where, serverTimestamp, setDoc } from "firebase/firestore";
 import { doc, collection } from "@/lib/firebase";
 import { CompetitionRecord, Member } from "@/types/member";
 import { VoucherGroup, Voucher } from "@/types/voucher";
 import type { DocumentData, QuerySnapshot } from "firebase/firestore";
 import {
   asProgramDate,
-  categoryMatches,
+  competitionRankingMode,
   findCampaignVoucher,
   isActiveCashbackCampaign,
   jakartaPeriod,
@@ -21,7 +21,7 @@ import {
   isCompetitionMemberRecordData,
   mergeCompetitionRecords,
   parseProgramNumber,
-  sortCompetitionRecords,
+  rankCompetitionRecords,
   voucherStatusIsVisible,
   isVoucherWithinDates,
 } from "@/lib/memberProgram";
@@ -40,7 +40,7 @@ export default function DashboardPage() {
   const [userVouchers, setUserVouchers] = useState<Voucher[]>([]);
   const [competitionPoints, setCompetitionPoints] = useState<number>(0);
   const [competitionData, setCompetitionData] = useState<CompetitionStats | null>(null);
-  const [allMembers, setAllMembers] = useState<Record<string, Member>>({});
+  const [periodMetadata, setPeriodMetadata] = useState<Record<string, unknown>>({});
   const [showModal, setShowModal] = useState(false);
   const [selectedVoucher, setSelectedVoucher] = useState<Voucher | null>(null);
   const [feedbackContent, setFeedbackContent] = useState("");
@@ -63,28 +63,6 @@ export default function DashboardPage() {
     }
 
     if (member) {
-      // Fetch all members once to know categories for ranking
-      const fetchMembers = async () => {
-        try {
-          const snap = await getDocs(collection(db, "Members"));
-          const membersMap: Record<string, Member> = {};
-          snap.forEach(memberDoc => {
-            const tid = memberDoc.id.trim();
-            const data = memberDoc.data();
-            membersMap[tid] = {
-              ...data,
-              id: tid,
-              points: parseProgramNumber(data.points),
-            } as Member;
-          });
-          setAllMembers(membersMap);
-        } catch (error) {
-          console.error("Member category lookup failed:", error);
-          setAllMembers({});
-        }
-      };
-      fetchMembers();
-
       // Listen for live updates to points
       const unsub = onSnapshot(doc(db, "Members", member.id), (docSnap) => {
         if (docSnap.exists()) {
@@ -147,6 +125,7 @@ export default function DashboardPage() {
       const unsubLegacyCompetition = onSnapshot(
         doc(db, "competitionRecords", currentMonth),
         (snap) => {
+          setPeriodMetadata(snap.data() ?? {});
           legacyStats = snap.exists()
             ? (snap.data() as CompetitionStats)
             : {};
@@ -223,24 +202,17 @@ export default function DashboardPage() {
     const targetId = member.id.trim();
     const ownStats = competitionData[targetId] ?? competitionData[member.id];
     const ownRecord = ownStats ? competitionRecordFromData(targetId, ownStats) : null;
-    const targetCategory = ownRecord?.category || liveMember?.category || member.category || "";
+    const targetCategory = ownRecord?.category || "";
     const records: CompetitionRecord[] = [];
     Object.entries(competitionData).forEach(([mId, stats]) => {
       const trimmedMId = mId.trim();
-      const mInfo = allMembers[trimmedMId];
       const record = competitionRecordFromData(trimmedMId, stats);
-      // New POS records contain a category snapshot.  It is the source of
-      // truth for that month; only legacy records without a category fall
-      // back to the current member profile.
-      const recordCategory = record.category || mInfo?.category || "";
-      if (categoryMatches(recordCategory, targetCategory)) {
-        records.push({ ...record, category: recordCategory });
-      }
+      records.push(record);
     });
 
-    const rank = sortCompetitionRecords(records).findIndex((record) => record.memberId === targetId) + 1;
+    const rank = rankCompetitionRecords(records, competitionRankingMode(currentMonth, periodMetadata), targetCategory).findIndex((record) => record.memberId === targetId) + 1;
     return rank > 0 ? rank : null;
-  }, [member, competitionData, allMembers, liveMember]);
+  }, [member, competitionData, currentMonth, periodMetadata]);
 
   const handleFeedbackSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

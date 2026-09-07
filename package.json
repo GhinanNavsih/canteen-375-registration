@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:competition": "npm run test --prefix functions && node --test scripts/test-competition-web.cjs"
   },
   "dependencies": {
     "firebase": "^12.9.0",

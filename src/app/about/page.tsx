@@ -30,8 +30,9 @@ export default function AboutPage() {
             </div>
 
             <p className="about-section-desc">
-              Setiap bulan, anggota yang berhasil mengumpulkan poin <strong>terbanyak</strong> akan
-              mendapatkan reward eksklusif. 1 poin diperoleh dari setiap transaksi kelipatan Rp10.000 di Canteen 375.
+              Mulai September 2026, semua anggota bersaing dalam <strong>satu peringkat global</strong>.
+              Tiga anggota dengan poin terbanyak setiap bulan mendapatkan hadiah di bawah ini.
+              1 poin diperoleh dari setiap transaksi kelipatan Rp10.000 di Canteen 375.
             </p>
 
             <div className="prizes-list">

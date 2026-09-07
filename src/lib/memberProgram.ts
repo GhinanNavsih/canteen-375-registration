@@ -1,6 +1,30 @@
 import { Timestamp } from "firebase/firestore";
 import { CompetitionRecord } from "@/types/member";
 import { Voucher, VoucherGroup } from "@/types/voucher";
+import { competitionRankingMode, type CompetitionRankingMode } from "../../functions/src/competitionPolicy";
+export { competitionRankingMode, type CompetitionRankingMode };
+
+export function rankCompetitionRecords(records: CompetitionRecord[], mode: CompetitionRankingMode, category?: unknown): CompetitionRecord[] {
+  return sortCompetitionRecords(records.filter((record) =>
+    record.memberId.trim() !== "" && record.points > 0 &&
+    (mode === "global" || categoryMatches(record.category, category))));
+}
+
+export interface CompetitionPrizeWinner {
+  memberId: string;
+  rank: number;
+  prizeAmount: number;
+  category: string;
+  rankingMode: CompetitionRankingMode;
+}
+
+export function competitionWinnerFromData(periodId: string, data: Record<string, unknown>): CompetitionPrizeWinner | null {
+  const memberId = String(data.memberId ?? "").trim();
+  const rank = parseProgramNumber(data.rank);
+  const prizeAmount = parseProgramNumber(data.prizeAmount ?? data.value);
+  if (!memberId || rank < 1 || rank > 3 || prizeAmount <= 0) return null;
+  return { memberId, rank, prizeAmount, category: normalizeCompetitionCategory(data.category), rankingMode: competitionRankingMode(periodId, data) };
+}
 
 export type CompetitionCategoryKey = "santri" | "mahasiswa" | "staff_guru_dosen";
 
