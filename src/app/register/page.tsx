@@ -67,16 +67,17 @@ const ASRAMA_LIST = [
 
 const FACULTY_MAJOR_MAP: Record<string, string[]> = {
   "Agama Islam": ["S1 Pend. Agama Islam", "S1 Hukum Keluarga", "S1 PGMI"],
-  "Ilmu Kesehatan": ["S1 Ilmu Keperawatan", "D3 Keperawatan", "D3 Kebidanan", "Profesi Ners"],
+  "Ilmu Kesehatan": ["S1 Ilmu Keperawatan", "S1 Kebidanan", "D3 Keperawatan", "D3 Kebidanan", "Profesi Ners"],
   "Bisnis/Bahasa/Pendidikan": [
     "S1 Administrasi Bisnis",
     "S1 Sastra Inggris",
     "D3 Bahasa Jepang",
     "S1 Pendidikan Matematika",
-    "S1 Pendidikan B. Inggris"
+    "S1 Pendidikan B. Inggris",
+    "S1 Bahasa Inggris Bisnis"
   ],
   "Sains & Teknologi": ["S1 Sistem Informasi", "S1 Matematika"],
-  "Pascasarjana": ["S2 Manajemen Pend. Islam", "S2 Kesehatan Masyarakat"]
+  "Pascasarjana": ["S2 Manajemen Pend. Islam", "S2 Pendidikan Agama Islam", "S2 Kesehatan Masyarakat"]
 };
 
 export default function RegistrationPage() {
